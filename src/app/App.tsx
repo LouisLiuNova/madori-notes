@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpFromLine, BookOpen, CalendarDays, Check, ChevronDown,
   ChevronRight, CircleHelp, CircleX, Compass, DoorOpen, Eraser, FlipHorizontal2, Focus, Grid2X2, Layers3,
@@ -30,7 +30,7 @@ const original = import.meta.env.VITE_ORIGINAL_GAME_URL || 'https://store.steamp
 const presets = { paper: '奉书', bamboo: '若竹', iris: '藤霞', blueprint: '工业蓝图', bauhaus: '原色构成' } as const
 type Theme = keyof typeof presets
 type Mode = 'system' | 'light' | 'dark'
-type ModalName = 'chapters' | 'about' | 'theme' | 'hint' | 'result' | 'storage' | 'rules' | 'drawer'
+type ModalName = 'chapters' | 'about' | 'theme' | 'hint' | 'result' | 'storage' | 'rules' | 'drawer' | 'reset'
 type Session = { level: Level; reference: () => Promise<Board>; number?: number; legacy?: boolean }
 function lesson(i: number, legacy = false): Session {
   const { level, reference } = (legacy ? legacyTeaching : teaching)[i]
@@ -59,18 +59,21 @@ function setPreference(key: string, value: string) {
   try { localStorage.setItem(key, value) } catch { /* 偏好不可持久化时仍可游玩。 */ }
 }
 
-function Modal({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
+function Modal({ title, close, children, descriptionId, initialFocus }: {
+  title: string; close: () => void; children: ReactNode; descriptionId?: string; initialFocus?: RefObject<HTMLElement | null>
+}) {
   const ref = useRef<HTMLDialogElement>(null)
   useLayoutEffect(() => {
     const dialog = ref.current
     const previous = document.activeElement
     dialog?.showModal()
+    initialFocus?.current?.focus({ preventScroll: true })
     return () => {
       dialog?.close()
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true })
     }
-  }, [])
-  return <dialog ref={ref} className="modal" aria-label={title} onCancel={event => { event.preventDefault(); close() }}
+  }, [initialFocus])
+  return <dialog ref={ref} className="modal" aria-label={title} aria-describedby={descriptionId} onCancel={event => { event.preventDefault(); close() }}
     onClick={event => { if (event.target === event.currentTarget) close() }}>
     <div className="modal-content">
       <header><h2>{title}</h2><button className="icon-btn" aria-label="关闭" onClick={close}><X size={19} /></button></header>
@@ -96,6 +99,8 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const [hintStep, setHintStep] = useState(0)
   const [reference, setReference] = useState<Board | null>(null)
   const [message, setMessage] = useState('')
+  const resetCancel = useRef<HTMLButtonElement>(null)
+  const undoButton = useRef<HTMLButtonElement>(null)
   const board = history.boards[history.position]
   const atInitial = board === level.initial || JSON.stringify(board) === JSON.stringify(level.initial)
   const visibleBoard = reference ?? draft ?? board
@@ -127,6 +132,8 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   function resetBoard() {
     commit(level.initial)
     setRule('')
+    setModal(null)
+    requestAnimationFrame(() => undoButton.current?.focus({ preventScroll: true }))
   }
 
   function chooseTool(tool: Tool) {
@@ -302,12 +309,12 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
               </select>
             </label>
             <div className="toolbar-group history-group">
-              <button className="icon-btn" aria-label="撤销" title="撤销 (Ctrl/⌘ Z)" disabled={!history.position || Boolean(reference)}
+              <button ref={undoButton} className="icon-btn" aria-label="撤销" title="撤销 (Ctrl/⌘ Z)" disabled={!history.position || Boolean(reference)}
                 onClick={() => navigateHistory(-1)}><Undo2 size={18} /></button>
               <button className="icon-btn" aria-label="重做" title="重做 (Ctrl/⌘ Shift Z)" disabled={history.position === history.boards.length - 1 || Boolean(reference)}
                 onClick={() => navigateHistory(1)}><Redo2 size={18} /></button>
               <button className="tool-btn" title="恢复本关起始图纸，可撤销" disabled={atInitial || Boolean(draft || reference)}
-                onClick={resetBoard}>重置图纸</button>
+                onClick={() => setModal('reset')}>重置图纸</button>
             </div>
             <button className="mobile-palette plain" onClick={() => setModal('drawer')}><Layers3 size={17} />目录</button>
           </div>
@@ -322,6 +329,13 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         <button className="primary" onClick={submit} disabled={Boolean(reference)} data-ready={report.complete}>提交图纸 <ArrowRight size={17} /></button>
       </div>
     </div>
+    {modal === 'reset' && <Modal title="重置图纸？" close={() => setModal(null)} descriptionId="reset-description" initialFocus={resetCancel}>
+      <p id="reset-description">恢复本关的起始图纸。重置后可用「撤销」恢复当前草稿。</p>
+      <div className="modal-actions">
+        <button ref={resetCancel} className="plain" onClick={() => setModal(null)}>取消</button>
+        <button className="primary" onClick={resetBoard}>确认重置</button>
+      </div>
+    </Modal>}
     {modal === 'drawer' && <Modal title="绘图目录" close={() => setModal(null)}><div className="drawer">{palette}
       <button className="primary" onClick={() => setModal(null)}>返回图纸<ArrowRight size={16} /></button>
     </div></Modal>}
