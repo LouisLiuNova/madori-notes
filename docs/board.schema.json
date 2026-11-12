@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "roomTypes": {
+      "maxItems": 256,
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "living",
+              "bedroom",
+              "dining",
+              "kitchen",
+              "bath",
+              "study",
+              "balcony",
+              "hall"
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "openEdges": {
+      "maxItems": 544,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+      }
+    },
+    "openings": {
+      "maxItems": 544,
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "edge": {
+                "type": "string",
+                "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "window"
+              }
+            },
+            "required": [
+              "edge",
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "edge": {
+                "type": "string",
+                "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "swing"
+              },
+              "side": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "const": 0
+                  },
+                  {
+                    "type": "number",
+                    "const": 1
+                  }
+                ]
+              },
+              "hinge": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "const": 0
+                  },
+                  {
+                    "type": "number",
+                    "const": 1
+                  }
+                ]
+              }
+            },
+            "required": [
+              "edge",
+              "kind",
+              "side",
+              "hinge"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "edge": {
+                "type": "string",
+                "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "sliding"
+              },
+              "pocket": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "const": -1
+                  },
+                  {
+                    "type": "number",
+                    "const": 1
+                  }
+                ]
+              }
+            },
+            "required": [
+              "edge",
+              "kind",
+              "pocket"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "furniture": {
+      "maxItems": 512,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "x": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "y": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "rotation": {
+            "type": "string",
+            "enum": [
+              "N",
+              "E",
+              "S",
+              "W"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "x",
+          "y",
+          "rotation"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "roomTypes",
+    "openEdges",
+    "openings",
+    "furniture"
+  ],
+  "additionalProperties": false
+}
