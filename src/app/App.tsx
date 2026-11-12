@@ -3,7 +3,7 @@ import type { ReactNode, RefObject } from 'react'
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpFromLine, BookOpen, CalendarDays, Check, ChevronDown,
   ChevronRight, CircleHelp, CircleX, Compass, DoorOpen, Eraser, FlipHorizontal2, Focus, Grid2X2, Layers3,
-  Lightbulb, LockKeyhole, Minus, MousePointer2, Paintbrush, PanelsTopLeft, Plus, Redo2, RotateCw, SquareDashed,
+  Lightbulb, LockKeyhole, Minus, MousePointer2, PanelsTopLeft, Plus, Redo2, RotateCw, SquareDashed,
   Sun, Trash2, Undo2, Wifi, X,
 } from 'lucide-react'
 import { chapters, teaching } from '../../content/levels.ts'
@@ -19,7 +19,6 @@ import { api, useCloud } from './cloud.ts'
 import Plan from '../components/Plan.tsx'
 import { centered, layers } from './planView.ts'
 import type { Layer } from './planView.ts'
-import { isEraseTool, isRectangleTool } from './editor.ts'
 import type { EraseScope, Selection, Tool } from './editor.ts'
 import { mergeSaves, readArchive, readSaves, writeSaves } from './storage.ts'
 import type { Save, Saves } from './storage.ts'
@@ -30,20 +29,21 @@ const original = import.meta.env.VITE_ORIGINAL_GAME_URL || 'https://store.steamp
 const presets = { paper: '奉书', bamboo: '若竹', iris: '藤霞', blueprint: '工业蓝图', bauhaus: '原色构成' } as const
 type Theme = keyof typeof presets
 type Mode = 'system' | 'light' | 'dark'
-type ModalName = 'chapters' | 'about' | 'theme' | 'hint' | 'result' | 'storage' | 'rules' | 'drawer' | 'reset'
+type ModalName = 'chapters' | 'about' | 'theme' | 'hint' | 'result' | 'storage' | 'rules' | 'layers' | 'reset'
 type Session = { level: Level; reference: () => Promise<Board>; number?: number; legacy?: boolean }
 function lesson(i: number, legacy = false): Session {
   const { level, reference } = (legacy ? legacyTeaching : teaching)[i]
   return { level, reference: async () => reference, number: i + 1, legacy }
 }
-const symbols: Record<Tool, typeof Paintbrush> = {
-  paint: Paintbrush, rect: SquareDashed, erase: Eraser, eraseRect: Eraser, open: DoorOpen, wall: Grid2X2, swing: DoorOpen,
+const symbols: Record<Tool, typeof SquareDashed> = {
+  rect: SquareDashed, eraseRect: Eraser, open: DoorOpen, wall: Grid2X2, swing: DoorOpen,
   sliding: PanelsTopLeft, window: PanelsTopLeft, furniture: Layers3, move: MousePointer2, remove: Trash2,
 }
 const toolNames: Record<Tool, string> = {
-  paint: '画笔', rect: '矩形', erase: '画笔擦除', eraseRect: '矩形擦除', open: '开放', wall: '恢复隔墙', swing: '推门', sliding: '拉门',
+  rect: '矩形', eraseRect: '矩形擦除', open: '开放', wall: '恢复隔墙', swing: '推门', sliding: '拉门',
   window: '外窗', furniture: '家具', move: '移动家具', remove: '移除物件',
 }
+const rectangleShortcuts = { rect: 'M', eraseRect: 'E' } as const
 const eraseScopes: Record<EraseScope, string> = {
   all: '擦除全部（含门窗与墙）',
   roomsFurniture: '房间和家具',
@@ -90,7 +90,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const { level, number } = session
   const [history, setHistory] = useState(() => ({ boards: [save?.board ?? level.initial], position: 0 }))
   const [draft, setDraft] = useState<Board | null>(null)
-  const [selection, select] = useState<Selection>({ tool: 'paint', room: level.roomTypes[0], furniture: level.furnitureTypes[0] ?? '',
+  const [selection, select] = useState<Selection>({ tool: 'rect', room: level.roomTypes[0], furniture: level.furnitureTypes[0] ?? '',
     rotation: 'N', side: 0, mirror: false, eraseScope: 'rooms' })
   const [view, setView] = useState(centered)
   const [visibleLayers, setLayers] = useState<Layer[]>(['分区', '结构'])
@@ -166,8 +166,8 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         event.preventDefault()
         navigateHistory(key === 'y' || event.shiftKey ? 1 : -1)
       } else if (!event.ctrlKey && !event.metaKey && !event.altKey) {
-        const tools: Partial<Record<string, Tool>> = { b: 'paint', m: 'rect', e: event.shiftKey ? 'eraseRect' : 'erase' }
-        if (tools[key]) chooseTool(tools[key])
+        if (key === 'm') chooseTool('rect')
+        if (key === 'e') chooseTool('eraseRect')
         if (key === 'r') rotate()
         if (key === 'f') select({ ...selection, mirror: !selection.mirror })
       }
@@ -238,15 +238,20 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     setModal('result')
   }
 
-  const palette = <>
+  const layerOptions = <div className="layer-options">
+    {layers.map(layer => <label key={layer}><input type="checkbox" checked={visibleLayers.includes(layer)}
+      onChange={() => setLayers(current => current.includes(layer) ? current.filter(item => item !== layer) : [...current, layer])} />
+      {layer}</label>)}
+  </div>
 
+  const palette = <>
     <section className="palette-group" aria-label="房间类型"><div className="palette-heading"><Grid2X2 size={14} /> 房间</div>
     <div className="room-options">
       {level.roomTypes.map(type => <button className="room-option" key={type} disabled={readOnly}
-        aria-pressed={selection.room === type && ['paint', 'rect'].includes(selection.tool)}
-        onClick={() => select({ ...selection, room: type, tool: isRectangleTool(selection.tool) ? 'rect' : 'paint' })}>
+        aria-pressed={selection.room === type && selection.tool === 'rect'}
+        onClick={() => select({ ...selection, room: type, tool: 'rect' })}>
         <span className={`swatch room-${type}`} />{rooms[type]}
-        {selection.room === type && ['paint', 'rect'].includes(selection.tool) && <Check className="choice-check" size={15} />}
+        {selection.room === type && selection.tool === 'rect' && <Check className="choice-check" size={15} />}
       </button>)}
     </div></section>
     <section className="palette-group" aria-label="墙与开口"><div className="palette-heading"><DoorOpen size={15} /> 墙与开口</div>
@@ -277,11 +282,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     </div>}
     <div className="layer-section palette-group">
       <div className="palette-heading"><Layers3 size={15} /> 辅助图层</div>
-      <div className="layer-options">
-        {layers.map(layer => <label key={layer}><input type="checkbox" checked={visibleLayers.includes(layer)}
-          onChange={() => setLayers(current => current.includes(layer) ? current.filter(item => item !== layer) : [...current, layer])} />
-          {layer}</label>)}
-      </div>
+      {layerOptions}
     </div>
   </>
 
@@ -347,15 +348,15 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
           </div>
           <div className="toolbar">
             <div className="toolbar-group">
-              {(['paint', 'rect', 'erase', 'eraseRect'] as const).map((tool, i) => {
+              {(['rect', 'eraseRect'] as const).map(tool => {
                 const Icon = symbols[tool]
                 return <button className="tool-btn" key={tool} disabled={Boolean(reference)} aria-pressed={selection.tool === tool}
-                  title={`${toolNames[tool]} (${['B', 'M', 'E', 'Shift+E'][i]})`} onClick={() => chooseTool(tool)}><Icon size={17} />{toolNames[tool]}</button>
+                  title={`${toolNames[tool]} (${rectangleShortcuts[tool]})`} onClick={() => chooseTool(tool)}><Icon size={17} />{toolNames[tool]}</button>
               })}
             </div>
             <label className="erase-scope">擦除范围
               <select disabled={Boolean(reference)} value={selection.eraseScope} onChange={event => select({ ...selection,
-                tool: isEraseTool(selection.tool) ? selection.tool : 'erase', eraseScope: event.target.value as EraseScope })}>
+                tool: 'eraseRect', eraseScope: event.target.value as EraseScope })}>
                 {Object.entries(eraseScopes).map(([scope, label]) => <option key={scope} value={scope}>{label}</option>)}
               </select>
             </label>
@@ -367,11 +368,11 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
               <button className="tool-btn" title="恢复本关起始图纸，可撤销" disabled={atInitial || Boolean(draft || reference)}
                 onClick={() => setModal('reset')}>重置图纸</button>
             </div>
-            <button className="mobile-palette plain" onClick={() => setModal('drawer')}><Layers3 size={17} />目录</button>
+            <button className="mobile-layers plain" aria-haspopup="dialog" onClick={() => setModal('layers')}><Layers3 size={17} />图层</button>
           </div>
         </section>
 
-        <aside className="palette-panel" aria-label="绘图目录">{palette}</aside>
+        <aside className="palette-panel" aria-label="绘图工具">{palette}</aside>
       </main>
 
       <div className="finish-bar">
@@ -387,9 +388,9 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         <button className="primary" onClick={resetBoard}>确认重置</button>
       </div>
     </Modal>}
-    {modal === 'drawer' && <Modal title="绘图目录" close={() => setModal(null)}><div className="drawer">{palette}
-      <button className="primary" onClick={() => setModal(null)}>返回图纸<ArrowRight size={16} /></button>
-    </div></Modal>}
+    {modal === 'layers' && <Modal title="辅助图层" close={() => setModal(null)}>{layerOptions}
+      <div className="modal-actions"><button className="primary" onClick={() => setModal(null)}>返回图纸<ArrowRight size={16} /></button></div>
+    </Modal>}
     {modal === 'rules' && <Modal title="规则说明" close={() => setModal(null)}>
       <ul className="rule-list">
         <li>涂绘所有可用格。同类四向连成一间房；承重墙完全截断时才分房。</li>
@@ -398,8 +399,8 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         <li>推门可放在普通隔墙或外墙，外窗只可放在外墙。拉门需要连续两段普通隔墙，分别作为洞口和收纳墙。</li>
         <li>Wi-Fi 半径以格中心计算，跨墙覆盖取并集。</li>
         <li>图示以 1 格对应 1000 mm 标注定位轴线和轮廓尺寸。委托条件仍以格数计算。</li>
-        <li>画笔 B，矩形 M，画笔擦除 E，矩形擦除 Shift+E，旋转 R，镜像 F。用方向键选格，Shift + 方向键选边，Enter 应用工具。矩形工具用 Enter 分别选定两个角。</li>
-        <li>画笔和矩形共用擦除范围。擦除全部会清除选区内的房间、家具、玩家门窗和墙体改动，固定结构保留。</li>
+        <li>矩形 M，矩形擦除 E，旋转 R，镜像 F。点按编辑单格，拖动选定矩形。键盘用方向键选格，Shift + 方向键选边，Enter 应用工具。矩形工具用 Enter 分别选定两个角。</li>
+        <li>选择「擦除全部」会清除选区内的房间、家具、玩家门窗和墙体改动，固定结构保留。</li>
       </ul>
     </Modal>}
     {modal === 'hint' && <Modal title="委托提示" close={closeHint}>

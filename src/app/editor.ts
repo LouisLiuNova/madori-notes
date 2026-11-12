@@ -3,7 +3,7 @@ import { edgeAt, index, point, shiftEdge, sides } from '../../packages/domain/ge
 import type { Board, Direction, Edge, Level, Opening, RoomType } from '../../packages/domain/model.ts'
 import { fitsOpening, wallBoundary } from '../../packages/domain/openings.ts'
 
-export type Tool = 'paint' | 'rect' | 'erase' | 'eraseRect' | 'open' | 'wall' | Opening['kind'] | 'furniture' | 'move' | 'remove'
+export type Tool = 'rect' | 'eraseRect' | 'open' | 'wall' | Opening['kind'] | 'furniture' | 'move' | 'remove'
 export type EraseScope = 'all' | 'roomsFurniture' | 'rooms' | 'furniture' | 'openings'
 export interface Hit { cell: number; edge: Edge }
 export interface Selection {
@@ -17,7 +17,6 @@ export interface Selection {
 }
 
 export const isRectangleTool = (tool: Tool) => tool === 'rect' || tool === 'eraseRect'
-export const isEraseTool = (tool: Tool) => tool === 'erase' || tool === 'eraseRect'
 export const isOpeningTool = (tool: Tool): tool is Opening['kind'] =>
   tool === 'window' || tool === 'swing' || tool === 'sliding'
 
@@ -54,29 +53,21 @@ function erase(level: Level, board: Board, cells: Set<number>, scope: EraseScope
   return { ...board, roomTypes, furniture, openings, openEdges }
 }
 
-export function edit(level: Level, board: Board, hit: Hit, selection: Selection, start: Hit, from = start): Board {
+export function edit(level: Level, board: Board, hit: Hit, selection: Selection, start: Hit): Board {
   const { cell, edge } = hit
   const { tool } = selection
-  if (tool === 'paint' || isEraseTool(tool) || isRectangleTool(tool)) {
-    if (cell < 0 || from.cell < 0) return board
-    const a = point(level.width, from.cell)
+  if (isRectangleTool(tool)) {
+    if (cell < 0 || start.cell < 0) return board
+    const a = point(level.width, start.cell)
     const b = point(level.width, cell)
     const cells = new Set<number>()
-    const visit = (x: number, y: number) => {
-      const i = index(level, x, y)
-      if (i >= 0) cells.add(i)
-    }
-    if (isRectangleTool(tool)) {
-      for (let y = Math.min(a.y, b.y); y <= Math.max(a.y, b.y); y++) {
-        for (let x = Math.min(a.x, b.x); x <= Math.max(a.x, b.x); x++) visit(x, y)
-      }
-    } else {
-      const steps = Math.max(1, Math.abs(a.x - b.x), Math.abs(a.y - b.y))
-      for (let step = 0; step <= steps; step++) {
-        visit(Math.round(a.x + (b.x - a.x) * step / steps), Math.round(a.y + (b.y - a.y) * step / steps))
+    for (let y = Math.min(a.y, b.y); y <= Math.max(a.y, b.y); y++) {
+      for (let x = Math.min(a.x, b.x); x <= Math.max(a.x, b.x); x++) {
+        const i = index(level, x, y)
+        if (i >= 0) cells.add(i)
       }
     }
-    if (isEraseTool(tool)) return erase(level, board, cells, selection.eraseScope)
+    if (tool === 'eraseRect') return erase(level, board, cells, selection.eraseScope)
     if ([...cells].every(cell => board.roomTypes[cell] === selection.room)) return board
     return { ...board, roomTypes: board.roomTypes.map((type, cell) => cells.has(cell) ? selection.room : type) }
   }

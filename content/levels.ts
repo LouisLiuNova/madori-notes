@@ -76,7 +76,7 @@ const alignment: Constraint = { kind: 'noFacing', label: '门窗中心轴不可�
 
 const commissions: Commission[] = [
   {
-    title: '第一张平面图', brief: '把未分配的格子划为客厅，完成临街小宅的第一张图。', tip: '选中客厅，拖动画笔涂绘，或使用矩形工具一次填满一块区域。',
+    title: '第一张平面图', brief: '把未分配的格子划为客厅，完成临街小宅的第一张图。', tip: '选中客厅，点按填充一格，或拖出矩形填充一块区域。',
     plan: ['..LLLLLL', '..LLLLLL', '..LLLLLL', '..LLLLLL', 'LLLLLLLL', 'LLLLLLLL', 'LLLLLLLL', 'LLLLLLLL'],
     entry: 'H:1:8', clues: [space('L', 55)], keep: 'L', clear: [[5, 0, 7, 3], [7, 5, 7, 7]],
     extraRooms: ['hall'], alternate: board => { board.roomTypes[7] = 'hall'; board.openEdges.push('V:7:0') },

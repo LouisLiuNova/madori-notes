@@ -91,7 +91,7 @@ function withItems(board: Board, ...items: Furniture[]) {
 const entries: Teaching[] = [
   {
     title: '第一张平面图', brief: '把未分配的格子划为客厅，完成一张可从主入口进入的平面图。',
-    tip: '选中客厅，拖动画笔涂绘，或使用矩形工具一次填满一块区域。',
+    tip: '选中客厅，点按填充一格，或拖出矩形填充一块区域。',
     n: 8, types: ['living', 'hall'], constraints: [area('living', 46)],
     build: variant => {
       const board = layout(8, [['living', 8]])

@@ -13,7 +13,6 @@ import type { Hit, Selection, Tool } from '../app/editor.ts'
 import type { Layer, View } from '../app/planView.ts'
 
 const edgeTools = new Set(['open', 'wall', 'swing', 'sliding', 'window'])
-const placeTools = new Set(['paint', 'erase', 'rect', 'open', 'wall'])
 
 interface Props {
   level: Level; board: Board; report: Report; selection: Selection; layers: Layer[]; highlight?: Result
@@ -126,8 +125,8 @@ export default function Plan({ level, board, report, selection, layers, highligh
     if (!action || action.id !== event.pointerId || !target || (action.last.cell === target.cell && action.last.edge === target.edge)) return
     if (isRectangleTool(action.selection.tool) || action.selection.tool === 'move') {
       action.next = edit(level, action.before, target, action.selection, action.start)
-    } else if (placeTools.has(action.selection.tool)) {
-      action.next = edit(level, action.next, target, action.selection, action.start, action.last)
+    } else if (action.selection.tool === 'open' || action.selection.tool === 'wall') {
+      action.next = edit(level, action.next, target, action.selection, action.start)
     }
     action.last = target
     preview(action.next)
