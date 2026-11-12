@@ -237,7 +237,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         <button className="breadcrumb" onClick={openChapters}><BookOpen size={15} /> 关卡目录 <ChevronRight size={13} /> {chapter}</button>
         <div className="level-title">
           <div className="level-number" aria-label={number ? `第 ${number} 关` : undefined}>{number ? String(number).padStart(2, '0') : <CalendarDays size={25} />}</div>
-          <div><h1>{level.title}</h1><p>{number ? level.brief : `${level.date} · ${level.difficulty} · ${level.brief}`}</p></div>
+          <div><h1>{level.title}</h1><p>{number ? level.brief : `${level.date} · ${level.difficulty}`}</p></div>
           <button className="plain intro-rules" onClick={() => setModal('rules')}><CircleHelp size={17} />规则说明</button>
         </div>
       </div>
@@ -319,7 +319,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
 
       <div className="finish-bar">
         <div className="finish-status" role="status"><span className="save-dot" />{message || status}</div>
-        <span className="keyboard-note" id="board-keys">方向键移动 · Shift + 方向键选边 · Enter 编辑</span>
+        <span id="board-keys" hidden>方向键移动 · Shift + 方向键选边 · Enter 编辑</span>
         <button className="primary" onClick={submit} disabled={Boolean(reference)} data-ready={report.complete}>提交图纸 <ArrowRight size={17} /></button>
       </div>
     </div>
@@ -334,13 +334,12 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         <li>推门可放在普通隔墙或外墙，外窗只可放在外墙。拉门需要连续两段普通隔墙，分别作为洞口和收纳墙。</li>
         <li>Wi-Fi 半径以格中心计算，跨墙覆盖取并集。</li>
         <li>图示以 1 格对应 1000 mm 标注定位轴线和轮廓尺寸。委托条件仍以格数计算。</li>
-        <li>画笔 B，矩形 M，画笔擦除 E，矩形擦除 Shift+E，旋转 R，镜像 F。用方向键选格，按 Enter 应用工具。矩形工具用 Enter 分别选定两个角。</li>
+        <li>画笔 B，矩形 M，画笔擦除 E，矩形擦除 Shift+E，旋转 R，镜像 F。用方向键选格，Shift + 方向键选边，Enter 应用工具。矩形工具用 Enter 分别选定两个角。</li>
         <li>画笔和矩形共用擦除范围。擦除全部会清除选区内的房间、家具、玩家门窗和墙体改动，固定结构保留。</li>
       </ul>
     </Modal>}
     {modal === 'hint' && <Modal title="委托提示" close={() => setModal(null)}>
-      <p>{hintStep > 0 ? level.tip : '可以先看说明，再定位未完成的位置，或打开一份合法的参考图。'}</p>
-      {hints > 0 && <p className="muted">已使用第 {hints} 级提示</p>}
+      {hintStep > 0 && <p>{level.tip}</p>}
       <div className="modal-actions">
         <button className="plain" onClick={() => void reveal(1)}>解释线索</button>
         <button className="plain" onClick={() => void reveal(2)}>定位问题</button>
@@ -348,7 +347,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
       </div>
     </Modal>}
     {modal === 'result' && <Modal title="委托已完成" close={() => setModal(null)}>
-      <p>图纸已通过全局规则与全部委托条件。{hints ? `本次使用了 ${hints} 级提示。` : '本次未使用提示。'}</p>
+      {hints > 0 && <p>本次用到第 {hints} 级提示。</p>}
       <div className="modal-actions">
         <button className="plain" onClick={() => { setModal(null); closeLevel() }}>返回关卡目录</button>
         {number && number < teaching.length && <button className="primary" onClick={next}>下一关 <ArrowRight size={17} /></button>}
@@ -482,7 +481,7 @@ export default function App() {
       <div className="page-width header-row">
         <button className="brand" onClick={() => setModal('chapters')} aria-label="间取手帖关卡目录">
           <span className="brand-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 11h7V4m0 7v5h9M8 20v-4" /></svg></span>
-          <span>间取手帖<small>MADORI NOTES</small></span>
+          <span>间取手帖</span>
         </button>
         <nav aria-label="主要导航">
           <button className="nav-link" data-active={Boolean(session.number)} onClick={() => setModal('chapters')}><BookOpen size={17} />章节</button>
@@ -508,11 +507,11 @@ export default function App() {
       }} openChapters={() => setModal('chapters')}
       next={() => session.number && openLesson(session.number, session.legacy)} closeLevel={() => setModal('chapters')} /> :
       <p className="page-width loading" role="status">正在打开图纸…</p>}
-    <footer className="page-width footer"><span>间取手帖 · 建筑空间解谜</span><div>
+    <footer className="page-width footer">
       <button onClick={() => setModal('about')}>关于</button>
       <a href={repo} target="_blank" rel="noreferrer">GitHub</a><a href={`${repo}/issues`} target="_blank" rel="noreferrer">反馈问题</a>
       <a href={original} target="_blank" rel="noreferrer">购买原作</a>
-    </div></footer>
+    </footer>
 
     {modal === 'chapters' && <Modal title="关卡目录" close={close}>
       <p>已完成 {completed} / {teaching.length} 关</p>
@@ -538,7 +537,7 @@ export default function App() {
         aria-pressed={mode === value} className="plain" onClick={() => setMode(value)}>{{ system: '跟随系统', light: '亮色', dark: '暗色' }[value]}</button>)}</div>
     </Modal>}
     {modal === 'storage' && <Modal title="本地存档" close={close}>
-      <p>{status}。{cloud.profile ? '' : '当前以游客身份游玩。'}</p>
+      <p>{status}。</p>
       <input type="file" accept=".json,application/json" ref={upload} hidden onChange={async event => {
         const file = event.target.files?.[0]
         event.target.value = ''
@@ -554,7 +553,7 @@ export default function App() {
         <button className="plain" disabled={!ready} onClick={exportArchive}><ArrowDownToLine size={16} />导出存档</button>
         <button className="plain" disabled={!ready} onClick={() => upload.current?.click()}><ArrowUpFromLine size={16} />导入存档</button>
       </div>
-      {incoming && <><p>已读取 {Object.keys(incoming).length} 份图纸。遇到同一关的草稿时，可选择保留来源。</p>
+      {incoming && <><p>已读取 {Object.keys(incoming).length} 份图纸。请选择同关草稿冲突时保留的版本。</p>
         <div className="modal-actions">{[false, true].map(prefer => <button key={String(prefer)} className="plain" onClick={() => {
           write(mergeSaves(savesRef.current, incoming, prefer)); setSaveVersion(value => value + 1); setIncoming(null); setNotice('已合并存档。')
         }}>{prefer ? '采用导入草稿' : '保留本地草稿'}</button>)}</div></>}
@@ -569,8 +568,7 @@ export default function App() {
       <CloudPanel cloud={cloud} />
     </Modal>}
     {modal === 'about' && <Modal title="关于间取手帖" close={close}>
-      <p>本项目受《图纸没问题》的空间解谜玩法启发，由个人出于兴趣爱好与技术练习制作，非官方项目。欢迎前往 Steam 了解并购买原作，支持原作者。</p>
-      <p className="muted">React · TypeScript · Vite · SVG · IndexedDB</p>
+      <p>玩法受《图纸没问题》启发。</p>
       <div className="modal-actions"><a href={original} target="_blank" rel="noreferrer">购买原作</a><a href={repo} target="_blank" rel="noreferrer">项目源码</a></div>
     </Modal>}
   </>

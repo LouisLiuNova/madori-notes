@@ -29,8 +29,9 @@ export default function CloudPanel({ cloud }: { cloud: ReturnType<typeof useClou
   }
 
   if (cloud.cloudStatus !== 'available' && !cloud.profile) {
+    if (cloud.cloudStatus === 'unconfigured') return null
     return <section className="cloud-panel"><h3>云档案</h3>
-      <p className="muted">{{ checking: '正在检查云服务…', unconfigured: '云服务未配置，草稿保存在此设备。', offline: '云服务暂时无法连接。' }[cloud.cloudStatus]}</p>
+      <p className="muted">{cloud.cloudStatus === 'checking' ? '正在检查云服务…' : '云服务暂时无法连接。'}</p>
     </section>
   }
 
