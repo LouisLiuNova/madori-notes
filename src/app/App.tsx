@@ -26,7 +26,6 @@ import type { Save, Saves } from './storage.ts'
 import { useReport } from './useReport.ts'
 import '../themes/workspace.css'
 
-const repo = import.meta.env.VITE_REPOSITORY_URL || 'https://github.com/LouisLiuNova/madori-notes'
 const original = import.meta.env.VITE_ORIGINAL_GAME_URL || 'https://store.steampowered.com/app/5429370/'
 const presets = { paper: '奉书', bamboo: '若竹', iris: '藤霞', blueprint: '工业蓝图', bauhaus: '原色构成' } as const
 type Theme = keyof typeof presets
@@ -509,8 +508,6 @@ export default function App() {
       <p className="page-width loading" role="status">正在打开图纸…</p>}
     <footer className="page-width footer">
       <button onClick={() => setModal('about')}>关于</button>
-      <a href={repo} target="_blank" rel="noreferrer">GitHub</a><a href={`${repo}/issues`} target="_blank" rel="noreferrer">反馈问题</a>
-      <a href={original} target="_blank" rel="noreferrer">购买原作</a>
     </footer>
 
     {modal === 'chapters' && <Modal title="关卡目录" close={close}>
@@ -568,8 +565,9 @@ export default function App() {
       <CloudPanel cloud={cloud} />
     </Modal>}
     {modal === 'about' && <Modal title="关于间取手帖" close={close}>
-      <p>玩法受《图纸没问题》启发。</p>
-      <div className="modal-actions"><a href={original} target="_blank" rel="noreferrer">购买原作</a><a href={repo} target="_blank" rel="noreferrer">项目源码</a></div>
+      <p>间取手帖是一款建筑空间解谜游戏。在网格图纸上划分房间、设置门窗、摆放家具，满足委托对面积、采光和动线的要求。你可以从 24 个教学关卡入门，也可以直接尝试每日挑战。</p>
+      <h3>声明</h3>
+      <p>间取手帖由个人独立开发，玩法受<a className="about-link" href={original} target="_blank" rel="noreferrer">《图纸没问题》</a>启发，为非官方作品。</p>
     </Modal>}
   </>
 }
