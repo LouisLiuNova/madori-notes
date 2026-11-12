@@ -1,4 +1,4 @@
-import { area } from '../../content/levels.ts'
+import { area } from '../../content/legacy-levels.ts'
 import { blank, versions } from '../domain/model.ts'
 import type { Board, Constraint, Edge, Level, Opening, RoomType } from '../domain/model.ts'
 import { maskBoard, shellMask, shellNames } from '../domain/shell.ts'

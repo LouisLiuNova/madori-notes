@@ -3,7 +3,7 @@ import DimensionLines from './DimensionLines.tsx'
 import FurnitureSymbol from './FurnitureSymbol.tsx'
 import type { KeyboardEvent, PointerEvent } from 'react'
 import { catalog, occupied } from '../../packages/domain/catalog.ts'
-import { edgeAt, index, point, segment, shiftEdge, turn } from '../../packages/domain/geometry.ts'
+import { edgeAt, index, point, segment, shiftEdge, sides, turn } from '../../packages/domain/geometry.ts'
 import { directions, rooms } from '../../packages/domain/model.ts'
 import type { Board, Edge, Level, Opening, Result } from '../../packages/domain/model.ts'
 import type { Report } from '../../packages/domain/validate.ts'
@@ -242,12 +242,16 @@ export default function Plan({ level, board, report, selection, layers, highligh
     {layers.includes('Wi-Fi') && board.furniture.filter(item => catalog[item.type]?.radius).map(item =>
       <circle key={item.id} cx={item.x + .5} cy={item.y + .5} r={catalog[item.type].radius} className="wifi-radius" />)}
     {[...highlightEdges].map(edge => <line key={edge} {...line(edge, .07)} className="edge-mark" />)}
-    <g className="entry-label">
-      {(() => { const { x, y } = segment(level.entrance); return <>
-        <path d={`M ${x + .5} ${y + .23} l -.1 .14 h .2 z`} />
-        <text x={x + .5} y={y + .64}>主入口</text>
-      </> })()}
-    </g>
+    {(() => {
+      const { x, y, horizontal } = segment(level.entrance)
+      const outward = sides(level, level.entrance)[0] === -1 ? -1 : 1
+      const angle = horizontal ? (outward === 1 ? 0 : 180) : (outward === -1 ? 90 : 270)
+      return <g className="entry-label" transform={`translate(${x + (horizontal ? .5 : 0)} ${y + (horizontal ? 0 : .5)})`}>
+        <path d="M 0 .17 L -.09 .31 H .09 Z" transform={`rotate(${angle})`} />
+        <text x={horizontal ? 0 : outward * .56} y={horizontal ? outward * .52 : 0}
+          textAnchor="middle" dominantBaseline="central">主入口</text>
+      </g>
+    })()}
     <g className="drawing-scale" transform={`translate(${level.width + .34} ${level.height - .62})`}>
       <path d="M 0 0 V .11 H 1 V 0 M .5 0 V .11" /><text x=".5" y=".34">1000</text>
     </g>

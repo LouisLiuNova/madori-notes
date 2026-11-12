@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { teaching } from '../../content/levels.ts'
+import { legacyTeaching } from '../../content/legacy-levels.ts'
 import { validate } from '../../packages/domain/validate.ts'
 import { generateDaily } from '../../packages/generator/daily.ts'
 
@@ -198,31 +199,67 @@ test('日题擦除范围可分别清除家具、房间和门窗，整图重置�
   await expect(furniture).toHaveCount(0)
 })
 
-test('拉门在普通墙落位，撤销后保留原结构', async ({ page }) => {
+test('拉门只放在连续隔墙，墙被擦掉后显示冲突且可撤销', async ({ page }) => {
   await page.goto('/')
   await unlock(page, 8)
+  const undo = page.getByRole('button', { name: '撤销' })
+  const pocket = page.locator('.edge-pocket')
   await page.getByRole('button', { name: '拉门', exact: true }).click()
-  await click(page, 5, 2.5)
-  await expect(page.locator('.edge-pocket')).toHaveCount(1)
+  await click(page, 2, 1.5)
+  await click(page, 4, 6.5)
+  await expect(pocket).toHaveCount(0)
+  await expect(undo).toBeDisabled()
+  await click(page, 4, 1.5)
+  await expect(pocket).toHaveCount(1)
   await expect(page.getByText('全局规则已满足')).toBeVisible()
-  await page.getByRole('button', { name: '撤销' }).click()
-  await expect(page.locator('.edge-pocket')).toHaveCount(0)
+  await page.getByRole('button', { name: '画笔擦除', exact: true }).click()
+  await click(page, 4.5, 1.5)
+  await expect(page.locator('.edge-invalid')).toHaveCount(1)
+  await expect(pocket).toHaveCount(0)
+  await undo.click()
+  await expect(pocket).toHaveCount(1)
+  await undo.click()
+  await expect(pocket).toHaveCount(0)
   await expect(page.getByText('餐厅需要开口和一条通往主入口的路线。')).toBeVisible()
+})
+
+test('外窗只放在外墙，推门只能放在墙段上', async ({ page }) => {
+  await page.goto('/')
+  await unlock(page, 9)
+  const windows = page.locator('g.edge-window')
+  const doors = page.locator('g.door')
+  const undo = page.getByRole('button', { name: '撤销' })
+  await page.getByRole('button', { name: '外窗', exact: true }).click()
+  await click(page, 4, 4.5)
+  await click(page, 9, 3.5)
+  await click(page, 8.67, 4.5)
+  await expect(windows).toHaveCount(1)
+  await expect(undo).toBeDisabled()
+  await click(page, 9, 4.5)
+  await expect(windows).toHaveCount(2)
+  await undo.click()
+  await page.getByRole('button', { name: '推门', exact: true }).click()
+  await click(page, 6, 4.5)
+  await expect(doors).toHaveCount(1)
+  await expect(undo).toBeDisabled()
+  await click(page, 4, 4.5)
+  await expect(doors).toHaveCount(2)
 })
 
 test('家具摆放和移动驱动覆盖、全局状态与提交', async ({ page }) => {
   await page.goto('/')
   await unlock(page, 20)
   await page.getByRole('button', { name: /智能电视 2×1/ }).click()
-  await click(page, 4.5, 2.5)
+  await page.keyboard.press('r')
+  await click(page, 5.5, 2.5)
   await expect(page.getByText('智能电视的所有占地都需要 Wi-Fi。')).toBeVisible()
   await page.getByRole('button', { name: /路由器 1×1/ }).click()
-  await click(page, 3.5, 4.5)
+  await click(page, 6.5, 3.5)
   await page.getByRole('checkbox', { name: 'Wi-Fi' }).check()
   await expect(page.locator('.wifi-radius')).toHaveCount(1)
   await expect(page.getByText('全局规则已满足')).toBeVisible()
   await page.getByRole('button', { name: '移动', exact: true }).click()
-  await drag(page, [3.5, 4.5], [1.5, 9.5])
+  await drag(page, [6.5, 3.5], [9.5, 5.5])
   await expect(page.getByText('智能电视的所有占地都需要 Wi-Fi。')).toBeVisible()
   await page.getByRole('button', { name: '撤销' }).click()
   await page.getByRole('button', { name: '提交图纸' }).click()
@@ -291,5 +328,43 @@ test('导出和导入提供可读取的存档', async ({ page }) => {
   for await (const chunk of stream) chunks.push(chunk)
   const output = JSON.parse(Buffer.concat(chunks).toString())
   expect(output.schemaVersion).toBe(1)
-  expect(validate(teaching[0].level, output.saves['lesson-01'].board).global[0].message).toContain('14')
+  expect(validate(teaching[0].level, output.saves[teaching[0].level.id].board).global[0].message).toContain('14')
+})
+
+
+test('两间卧室分别满足面积、外窗和走廊动线后才能提交', async ({ page }) => {
+  await page.goto('/')
+  await unlock(page, 3)
+  const rectangle = page.getByRole('button', { name: '矩形', exact: true })
+  await rectangle.click()
+  await page.getByRole('button', { name: '卧室', exact: true }).click()
+  await drag(page, [.5, .5], [3.5, 3.5])
+  await drag(page, [.5, 5.5], [3.5, 7.5])
+  await page.getByRole('button', { name: '客厅', exact: true }).click()
+  await drag(page, [5.5, .5], [8.5, 7.5])
+  await page.getByRole('button', { name: '提交图纸' }).click()
+  await expect(page.getByRole('status')).toContainText('还有未满足的条件')
+  await page.getByRole('button', { name: '开放', exact: true }).click()
+  for (const [x, y] of [[1.5, 4], [1.5, 5], [5, 4.5]]) await click(page, x, y)
+  await expect(page.getByText('全局规则已满足')).toBeVisible()
+  await page.getByRole('button', { name: '提交图纸' }).click()
+  await expect(page.getByRole('dialog', { name: '委托已完成' })).toBeVisible()
+})
+
+test('旧版草稿可以导入和继续绘图，独立于新版关卡进度', async ({ page }) => {
+  await page.goto('/')
+  const { level } = legacyTeaching[1]
+  await page.getByRole('button', { name: '本地存档' }).click()
+  await page.locator('input[type=file]').setInputFiles({
+    name: '旧版.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ schemaVersion: 1, saves: { [level.id]: { board: level.initial, hints: 0 } } })),
+  })
+  await page.getByRole('button', { name: '采用导入草稿' }).click()
+  await page.getByText('旧版教学草稿', { exact: true }).click()
+  await page.getByRole('button', { name: level.title, exact: true }).click()
+  await expect(page.getByRole('heading', { name: level.title })).toBeVisible()
+  await page.reload()
+  await expect(page.getByText('旧版教学', { exact: false }).first()).toBeVisible()
+  await page.getByRole('button', { name: '章节', exact: true }).click()
+  await expect(page.getByRole('button', { name: /02 一室相连/ })).toBeDisabled()
 })

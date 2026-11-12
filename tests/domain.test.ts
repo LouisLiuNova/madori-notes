@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { teaching } from '../content/levels.ts'
+import { legacyTeaching } from '../content/legacy-levels.ts'
+import { levelSchema } from '../packages/domain/schema.ts'
 import { catalog, occupied, usage } from '../packages/domain/catalog.ts'
 import { edgeAt, shiftEdge } from '../packages/domain/geometry.ts'
 import type { Edge, Furniture } from '../packages/domain/model.ts'
@@ -7,7 +9,7 @@ import { validate } from '../packages/domain/validate.ts'
 import { dateInSingapore, generateDaily } from '../packages/generator/daily.ts'
 
 function lesson(n: number) {
-  return structuredClone(teaching[n - 1])
+  return structuredClone(legacyTeaching[n - 1])
 }
 
 function outlineRows(mask: boolean[], width: number) {
@@ -152,12 +154,24 @@ describe('全局合法性', () => {
 })
 
 describe('关卡与存档', () => {
-  it.each(teaching)('$level.id 两份不同的解均通过，起始草稿未完成', ({ level, reference, alternative }) => {
+  it.each([...teaching, ...legacyTeaching])('$level.id 两份不同的解均通过，起始草稿未完成', ({ level, reference, alternative }) => {
+    expect(levelSchema.safeParse(level).success).toBe(true)
     expect(reference).not.toEqual(alternative)
     expect(validate(level, level.initial).complete).toBe(false)
     expect(validate(level, reference).complete).toBe(true)
     expect(validate(level, alternative).complete).toBe(true)
     expect(level.initial.furniture).toHaveLength(0)
+  })
+
+  it('跨墙联网必须把智能灯放在卧室，放在有信号的客厅无法通关', () => {
+    const { level, reference } = structuredClone(teaching[18])
+    const lamp = reference.furniture.find(item => item.type === 'smartLamp')!
+    lamp.x = 4
+    const report = validate(level, reference)
+    expect(report.global.every(result => result.status === 'satisfied')).toBe(true)
+    expect(report.level.filter(result => result.status !== 'satisfied')).toEqual([
+      expect.objectContaining({ id: `rule-${level.constraints.findIndex(rule => rule.kind === 'furniture' && rule.room === 'bedroom')}` }),
+    ])
   })
 
   it('不规则边界的凹口是外轮廓，空缺不计入面积或动线', () => {

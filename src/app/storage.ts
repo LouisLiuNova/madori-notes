@@ -2,6 +2,7 @@ import type { Board, Level } from '../../packages/domain/model.ts'
 import { maskBoard } from '../../packages/domain/shell.ts'
 import { boardSchema, isBoard } from '../../packages/domain/schema.ts'
 import { teaching } from '../../content/levels.ts'
+import { legacyTeaching } from '../../content/legacy-levels.ts'
 import { generateDaily, generatorVersions, validDate } from '../../packages/generator/daily.ts'
 
 export interface Save {
@@ -10,7 +11,7 @@ export interface Save {
   completed?: { at: string; hints: number }
 }
 export type Saves = Record<string, Save>
-const teachingById = new Map(teaching.map(({ level }) => [level.id, level]))
+const teachingById = new Map([...teaching, ...legacyTeaching].map(({ level }) => [level.id, level]))
 
 export function knownLevel(id: string): Level | undefined {
   const daily = /^daily-(\d{4}-\d{2}-\d{2})-(\d+)$/.exec(id)

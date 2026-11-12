@@ -7,6 +7,7 @@ import {
   Sun, Trash2, Undo2, Wifi, X,
 } from 'lucide-react'
 import { chapters, teaching } from '../../content/levels.ts'
+import { legacyTeaching } from '../../content/legacy-levels.ts'
 import { catalog } from '../../packages/domain/catalog.ts'
 import { turn } from '../../packages/domain/geometry.ts'
 import { rooms } from '../../packages/domain/model.ts'
@@ -31,8 +32,11 @@ const presets = { paper: '奉书', bamboo: '若竹', iris: '藤霞', blueprint: 
 type Theme = keyof typeof presets
 type Mode = 'system' | 'light' | 'dark'
 type ModalName = 'chapters' | 'about' | 'theme' | 'hint' | 'result' | 'storage' | 'rules' | 'drawer'
-type Session = { level: Level; reference: () => Promise<Board>; number?: number }
-const lesson = (i: number): Session => ({ ...teaching[i], reference: async () => teaching[i].reference, number: i + 1 })
+type Session = { level: Level; reference: () => Promise<Board>; number?: number; legacy?: boolean }
+function lesson(i: number, legacy = false): Session {
+  const { level, reference } = (legacy ? legacyTeaching : teaching)[i]
+  return { level, reference: async () => reference, number: i + 1, legacy }
+}
 const symbols: Record<Tool, typeof Paintbrush> = {
   paint: Paintbrush, rect: SquareDashed, erase: Eraser, eraseRect: Eraser, open: DoorOpen, wall: Grid2X2, swing: DoorOpen,
   sliding: PanelsTopLeft, window: PanelsTopLeft, furniture: Layers3, move: MousePointer2, remove: Trash2,
@@ -101,7 +105,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const highlight = results.find(rule => rule.id === selectedRule)
   const satisfied = report.level.filter(rule => rule.status === 'satisfied').length
   const problems = report.global.filter(rule => rule.status !== 'satisfied')
-  const chapter = number ? chapters[Math.floor((number - 1) / 6)] : '每日挑战'
+  const chapter = session.legacy ? '旧版教学' : number ? chapters[Math.floor((number - 1) / 6)] : '每日挑战'
 
   const persist = (next: Board, hintCount = hints, completed = save?.completed) =>
     onSave(level.id, { board: next, hints: hintCount, completed })
@@ -401,6 +405,8 @@ export default function App() {
       const last = preference('madori-last')
       const i = teaching.findIndex(item => item.level.id === last)
       if (i >= 0) setSession(lesson(i))
+      const legacy = legacyTeaching.findIndex(item => item.level.id === last)
+      if (legacy >= 0) setSession(lesson(legacy, true))
       if (last?.startsWith('daily-')) {
         const date = last.slice(6, 16)
         try {
@@ -430,8 +436,8 @@ export default function App() {
   }, [])
 
 
-  function openLesson(i: number) {
-    const target = lesson(i)
+  function openLesson(i: number, legacy = false) {
+    const target = lesson(i, legacy)
     setSession(target)
     setPreference('madori-last', target.level.id)
     setModal(null)
@@ -467,7 +473,8 @@ export default function App() {
 
   const unlocked = teaching.findIndex(({ level }) => !saves[level.id]?.completed)
   const completed = teaching.filter(({ level }) => saves[level.id]?.completed).length
-  const oldDaily = Object.keys(saves).filter(id => id.startsWith('daily-') && !id.includes(day)).sort().reverse()
+  const hasOldLessons = legacyTeaching.some(({ level }) => saves[level.id])
+  const oldDaily = Object.keys(saves).filter(id => id.startsWith('daily-')).sort().reverse()
   const close = () => { setModal(null); setIncoming(null); setNotice('') }
 
   return <>
@@ -499,7 +506,7 @@ export default function App() {
           })
         }
       }} openChapters={() => setModal('chapters')}
-      next={() => session.number && openLesson(session.number)} closeLevel={() => setModal('chapters')} /> :
+      next={() => session.number && openLesson(session.number, session.legacy)} closeLevel={() => setModal('chapters')} /> :
       <p className="page-width loading" role="status">正在打开图纸…</p>}
     <footer className="page-width footer"><span>间取手帖 · 建筑空间解谜</span><div>
       <button onClick={() => setModal('about')}>关于</button>
@@ -551,8 +558,12 @@ export default function App() {
         <div className="modal-actions">{[false, true].map(prefer => <button key={String(prefer)} className="plain" onClick={() => {
           write(mergeSaves(savesRef.current, incoming, prefer)); setSaveVersion(value => value + 1); setIncoming(null); setNotice('已合并存档。')
         }}>{prefer ? '采用导入草稿' : '保留本地草稿'}</button>)}</div></>}
-      {oldDaily.length > 0 && <details><summary>往期每日挑战</summary><div className="old-daily">
-        {oldDaily.map(id => <button className="plain" key={id} onClick={() => void openDaily(id.slice(6, 16), id)}>{id.slice(6, 16)}</button>)}
+      {hasOldLessons && <details><summary>旧版教学草稿</summary><div className="old-daily">
+        {legacyTeaching.map(({ level }, i) => saves[level.id] && <button className="plain" key={level.id}
+          onClick={() => openLesson(i, true)}>{level.title}</button>)}
+      </div></details>}
+      {oldDaily.length > 0 && <details><summary>每日挑战草稿</summary><div className="old-daily">
+        {oldDaily.map(id => <button className="plain" key={id} onClick={() => void openDaily(id.slice(6, 16), id)}>{id.slice(6, 16)} · v{id.slice(17)}</button>)}
       </div></details>}
       {notice && <p role="status">{notice}</p>}
       <CloudPanel cloud={cloud} />

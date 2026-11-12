@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import postgres from 'postgres'
+import { legacyTeaching } from '../content/legacy-levels.ts'
 import { teaching } from '../content/levels.ts'
 import type { Board, Level } from '../packages/domain/model.ts'
 import { isBoard } from '../packages/domain/schema.ts'
@@ -23,7 +24,7 @@ type ProgressRow = {
   level_id: string; board: Board; hints: number; revision: number; completed_at: Date | null; completed_hints: number | null
 }
 type Published = { level: Level; witnesses: Board[] }
-const lessonById = new Map(teaching.map(({ level }) => [level.id, level]))
+const lessonById = new Map([...teaching, ...legacyTeaching].map(({ level }) => [level.id, level]))
 const notSignedIn = () => new ApiError(401, 'SIGN_IN_REQUIRED', '请先登录云档案。')
 const token = () => randomBytes(24).toString('base64url')
 const hash = (text: string) => createHash('sha256').update(text).digest('hex')
