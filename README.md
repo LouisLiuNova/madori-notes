@@ -1,31 +1,32 @@
 # 间取手帖
 
-`madori-notes` 是受《图纸没问题》（*Looks Fine on Paper*）启发的非官方网页版建筑空间解谜项目。
+原创网页版建筑空间解谜。玩家在网格图纸上分配房间、调整边界和门窗、安放家具，满足委托后提交。包含 24 关教学、每日挑战、五套亮暗主题、本地草稿与可选云档案。
 
-## 本地开发
+受《图纸没问题》启发，由个人出于兴趣与技术练习制作。欢迎在 Steam 了解并支持原作者。[原作商店](https://store.steampowered.com/app/5429370/Looks_Fine_on_Paper/)
 
-使用 Bun 安装依赖并运行开发命令。这里使用 `bun --bun run` 让工具链由 Bun 执行。
+## 本地运行
 
-```bash
+```sh
 bun install --frozen-lockfile
-bun --bun run dev
+bun --bun run dev --host 127.0.0.1
 ```
 
-浏览器打开 Vite 输出的本地地址。当前页面是开发入口，游戏逻辑和云服务待实现。本地启动无需配置环境变量。
+从 Vite 输出打开浏览器。无环境变量即可游玩。使用方向键选格，Shift + 方向键选边，Enter 编辑。触屏通过底部目录选择区域与构件。
+
+- 前端默认在 [127.0.0.1:5173](http://127.0.0.1:5173/)。
+- [API 健康检查](http://127.0.0.1:5173/api/health) 返回当前云配置状态。
+- 游客进度保存在 IndexedDB，可从「本地存档」导入或导出。
+- 生产构建缓存前端和内置题面，可离线继续。首次在线打开页面后等待 Service Worker 接管。
+
+## 检查
 
 | 命令 | 用途 |
 | --- | --- |
 | `bun --bun run typecheck` | TypeScript 检查 |
 | `bun --bun run lint` | 静态检查 |
-| `bun --bun run test` | 运行 Vitest，当前尚无测试用例 |
-| `bun --bun run build` | 生成 `dist/` 生产产物 |
-| `bun --bun run preview` | 预览生产构建 |
+| `bun --bun run test` | 领域规则、存档与 1,000 个种子的生成验证 |
+| `bun --bun run build` | 生成 `dist/` 和离线资源 |
+| `bun run contracts:check` | 核对 OpenAPI 和 JSON Schema |
+| `bun --bun run test:e2e` | Chromium 交互回归，首次运行前安装浏览器 |
 
-## 项目目录
-
-- `src/` 存放 React 入口、应用、组件、主题和 Worker。
-- `packages/domain/` 和 `packages/generator/` 预留给共享规则与题目生成。
-- `api/`、`server/` 和 `migrations/` 预留给 API、服务层和数据库迁移。
-- `content/` 和 `tests/` 预留给关卡内容与集成测试。
-
-设计交接资料保存在本地的 `.local/handoff/`，内有原 ZIP 和完整的解压目录。开发前可从解压目录里的 `README.md` 查阅阅读顺序。Git 忽略整个本地资料目录，新克隆需要另行取得交接包。
+`content/` 保存关卡。前端、Worker、生成器和 API 共用 `packages/domain/`。API 契约、云配置和运维步骤见 [接口与部署](docs/deployment.md)，视觉与验证口径见 [MVP 说明](docs/mvp.md)。原始设计交接包由本地 `.local/handoff/` 管理。

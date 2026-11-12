@@ -1,0 +1,7 @@
+{
+  "framework": "vite",
+  "buildCommand": "bun --bun run build",
+  "installCommand": "bun install --frozen-lockfile",
+  "outputDirectory": "dist",
+  "crons": [{ "path": "/api/cron/daily", "schedule": "0 15 * * *" }]
+}
