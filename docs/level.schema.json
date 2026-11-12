@@ -1,0 +1,918 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "title": {
+      "type": "string"
+    },
+    "brief": {
+      "type": "string"
+    },
+    "tip": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "rulesVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "catalogVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 8,
+      "maximum": 16
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 8,
+      "maximum": 16
+    },
+    "usable": {
+      "maxItems": 256,
+      "type": "array",
+      "items": {
+        "type": "boolean"
+      }
+    },
+    "entrance": {
+      "type": "string",
+      "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+    },
+    "bearing": {
+      "maxItems": 544,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+      }
+    },
+    "fixed": {
+      "maxItems": 544,
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "edge": {
+                "type": "string",
+                "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "window"
+              }
+            },
+            "required": [
+              "edge",
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "edge": {
+                "type": "string",
+                "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "swing"
+              },
+              "side": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "const": 0
+                  },
+                  {
+                    "type": "number",
+                    "const": 1
+                  }
+                ]
+              },
+              "hinge": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "const": 0
+                  },
+                  {
+                    "type": "number",
+                    "const": 1
+                  }
+                ]
+              }
+            },
+            "required": [
+              "edge",
+              "kind",
+              "side",
+              "hinge"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "edge": {
+                "type": "string",
+                "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "sliding"
+              },
+              "pocket": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "const": -1
+                  },
+                  {
+                    "type": "number",
+                    "const": 1
+                  }
+                ]
+              }
+            },
+            "required": [
+              "edge",
+              "kind",
+              "pocket"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "roomTypes": {
+      "maxItems": 8,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "living",
+          "bedroom",
+          "dining",
+          "kitchen",
+          "bath",
+          "study",
+          "balcony",
+          "hall"
+        ]
+      }
+    },
+    "furnitureTypes": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      }
+    },
+    "openingTypes": {
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "swing",
+          "sliding",
+          "window"
+        ]
+      }
+    },
+    "initial": {
+      "type": "object",
+      "properties": {
+        "roomTypes": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "living",
+                  "bedroom",
+                  "dining",
+                  "kitchen",
+                  "bath",
+                  "study",
+                  "balcony",
+                  "hall"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "openEdges": {
+          "maxItems": 544,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+          }
+        },
+        "openings": {
+          "maxItems": 544,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "edge": {
+                    "type": "string",
+                    "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "const": "window"
+                  }
+                },
+                "required": [
+                  "edge",
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "edge": {
+                    "type": "string",
+                    "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "const": "swing"
+                  },
+                  "side": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "const": 0
+                      },
+                      {
+                        "type": "number",
+                        "const": 1
+                      }
+                    ]
+                  },
+                  "hinge": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "const": 0
+                      },
+                      {
+                        "type": "number",
+                        "const": 1
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "edge",
+                  "kind",
+                  "side",
+                  "hinge"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "edge": {
+                    "type": "string",
+                    "pattern": "^(H|V):-?\\d+(?:\\.\\d+)?:-?\\d+(?:\\.\\d+)?$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "const": "sliding"
+                  },
+                  "pocket": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "const": -1
+                      },
+                      {
+                        "type": "number",
+                        "const": 1
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "edge",
+                  "kind",
+                  "pocket"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "furniture": {
+          "maxItems": 512,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "x": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "y": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "rotation": {
+                "type": "string",
+                "enum": [
+                  "N",
+                  "E",
+                  "S",
+                  "W"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "x",
+              "y",
+              "rotation"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "roomTypes",
+        "openEdges",
+        "openings",
+        "furniture"
+      ],
+      "additionalProperties": false
+    },
+    "constraints": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "rooms"
+              },
+              "label": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "living",
+                  "bedroom",
+                  "dining",
+                  "kitchen",
+                  "bath",
+                  "study",
+                  "balcony",
+                  "hall"
+                ]
+              },
+              "min": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 256
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "type",
+              "min"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "slots"
+              },
+              "label": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "living",
+                  "bedroom",
+                  "dining",
+                  "kitchen",
+                  "bath",
+                  "study",
+                  "balcony",
+                  "hall"
+                ]
+              },
+              "slots": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "area"
+                          },
+                          "min": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 256
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "min"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "window"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "wifi"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "router"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "noRouter"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "type",
+              "slots"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "roomRule"
+              },
+              "label": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "living",
+                  "bedroom",
+                  "dining",
+                  "kitchen",
+                  "bath",
+                  "study",
+                  "balcony",
+                  "hall"
+                ]
+              },
+              "predicates": {
+                "maxItems": 8,
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "area"
+                        },
+                        "min": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "min"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "window"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "wifi"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "router"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "noRouter"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "min": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 256
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "type",
+              "predicates"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "relation"
+              },
+              "label": {
+                "type": "string"
+              },
+              "types": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "living",
+                      "bedroom",
+                      "dining",
+                      "kitchen",
+                      "bath",
+                      "study",
+                      "balcony",
+                      "hall"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "enum": [
+                      "living",
+                      "bedroom",
+                      "dining",
+                      "kitchen",
+                      "bath",
+                      "study",
+                      "balcony",
+                      "hall"
+                    ]
+                  }
+                ],
+                "items": false,
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "adjacent",
+                  "separate",
+                  "open",
+                  "door",
+                  "wall"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "types",
+              "mode"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "opening"
+              },
+              "label": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "swing",
+                  "sliding",
+                  "window"
+                ]
+              },
+              "min": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 256
+              },
+              "exterior": {
+                "type": "boolean"
+              },
+              "player": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "type",
+              "min"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "furniture"
+              },
+              "label": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "min": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 256
+              },
+              "room": {
+                "type": "string",
+                "enum": [
+                  "living",
+                  "bedroom",
+                  "dining",
+                  "kitchen",
+                  "bath",
+                  "study",
+                  "balcony",
+                  "hall"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "type",
+              "min"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "furnitureRule"
+              },
+              "label": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "direction",
+                  "wall",
+                  "window",
+                  "headWall",
+                  "headNoWindow",
+                  "footNoDoor",
+                  "privacy"
+                ]
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "N",
+                  "E",
+                  "S",
+                  "W"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "type",
+              "rule"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "noFacing"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": [
+        "入门",
+        "标准",
+        "进阶"
+      ]
+    },
+    "seed": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "generatorVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "brief",
+    "tip",
+    "schemaVersion",
+    "rulesVersion",
+    "catalogVersion",
+    "width",
+    "height",
+    "usable",
+    "entrance",
+    "bearing",
+    "fixed",
+    "roomTypes",
+    "furnitureTypes",
+    "openingTypes",
+    "initial",
+    "constraints"
+  ],
+  "additionalProperties": false
+}
