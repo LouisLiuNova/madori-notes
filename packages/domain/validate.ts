@@ -323,7 +323,8 @@ export function validate(level: Level, board: Board): Report {
       }
       case 'furniture':
       case 'furnitureRule': {
-        const group = [...objects].filter(([object]) => object.type === rule.type)
+        const group = [...objects].filter(([object, cells]) =>
+          object.type === rule.type && (rule.kind !== 'furniture' || !rule.room || roomOf.get(cells[0])?.type === rule.room))
         cells = group.flatMap(([, cells]) => cells)
         objectIds = group.map(([object]) => object.id)
         good = rule.kind === 'furniture' ? group.length >= rule.min :

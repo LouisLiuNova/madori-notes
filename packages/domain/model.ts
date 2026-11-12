@@ -39,7 +39,7 @@ export type Constraint = { label: string } & (
   | { kind: 'roomRule'; type: RoomType; predicates: RoomPredicate[]; min?: number }
   | { kind: 'relation'; types: [RoomType, RoomType]; mode: 'adjacent' | 'separate' | 'open' | 'door' | 'wall' }
   | { kind: 'opening'; type: Opening['kind']; min: number; exterior?: boolean; player?: boolean }
-  | { kind: 'furniture'; type: string; min: number }
+  | { kind: 'furniture'; type: string; min: number; room?: RoomType }
   | { kind: 'furnitureRule'; type: string; rule: 'direction' | 'wall' | 'window' | 'headWall' | 'headNoWindow' | 'footNoDoor' | 'privacy'; direction?: Direction }
   | { kind: 'noFacing' }
 )

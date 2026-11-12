@@ -45,7 +45,7 @@ const constraint = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('roomRule'), label, type: room, predicates: boundedArray(predicate, 8), min: z.optional(minimum) }),
   z.object({ kind: z.literal('relation'), label, types: z.tuple([room, room]), mode: z.enum(['adjacent', 'separate', 'open', 'door', 'wall']) }),
   z.object({ kind: z.literal('opening'), label, type: openingKind, min: minimum, exterior: z.optional(z.boolean()), player: z.optional(z.boolean()) }),
-  z.object({ kind: z.literal('furniture'), label, type: identifier, min: minimum }),
+  z.object({ kind: z.literal('furniture'), label, type: identifier, min: minimum, room: z.optional(room) }),
   z.object({ kind: z.literal('furnitureRule'), label, type: identifier, rule: z.enum(['direction', 'wall', 'window', 'headWall', 'headNoWindow', 'footNoDoor', 'privacy']), direction: z.optional(direction) }),
   z.object({ kind: z.literal('noFacing'), label }),
 ])

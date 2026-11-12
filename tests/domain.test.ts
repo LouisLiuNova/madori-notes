@@ -10,6 +10,31 @@ function lesson(n: number) {
   return structuredClone(teaching[n - 1])
 }
 
+function outlineRows(mask: boolean[], width: number) {
+  const cells = mask.flatMap((used, cell) => used ? [cell] : [])
+  const xs = cells.map(cell => cell % width)
+  const ys = cells.map(cell => Math.floor(cell / width))
+  const left = Math.min(...xs)
+  const right = Math.max(...xs)
+  const top = Math.min(...ys)
+  return Array.from({ length: Math.max(...ys) - top + 1 }, (_, row) =>
+    mask.slice((top + row) * width + left, (top + row) * width + right + 1).map(Number).join(''))
+}
+
+function outlineKey(rows: string[]) {
+  const variants: string[] = []
+  for (let turn = 0; turn < 4; turn++) {
+    variants.push(rows.join('/'), rows.map(row => [...row].reverse().join('')).join('/'))
+    rows = Array.from(rows[0], (_, column) => rows.map(row => row[column]).reverse().join(''))
+  }
+  return variants.sort()[0]
+}
+
+function hasTwoCellSetback(rows: string[]) {
+  return rows.slice(1).some((row, y) => [...row].some((_, x) =>
+    row.slice(x, x + 2) === '00' && rows[y].slice(x, x + 2) === '00'))
+}
+
 describe('全局合法性', () => {
   it('同类四连通合并，对角不合并，承重墙可绕通时仍合并', () => {
     const { level, reference } = lesson(1)
@@ -150,10 +175,27 @@ describe('关卡与存档', () => {
     expect(generateDaily('2026-11-12')).toEqual(generateDaily('2026-11-12'))
   })
 
-  it('连续七天生成七种轮廓，历史版本仍可读取', () => {
+  it('历史版本仍可读取，v4 保留原来的七日轮换和矩形', () => {
     const dates = Array.from({ length: 7 }, (_, i) => `2026-11-${12 + i}`)
-    expect(new Set(dates.map(date => generateDaily(date).quality.outline)).size).toBe(7)
+    const v4 = dates.map(date => generateDaily(date, date, undefined, '4'))
+    expect(new Set(v4.map(daily => daily.quality.outline)).size).toBe(7)
+    expect(v4[0].level.usable.every(Boolean)).toBe(true)
     expect(generateDaily(dates[0], dates[0], undefined, '1').quality.outline).toBe('整矩形')
+    for (const version of ['1', '2', '3'] as const) {
+      const daily = generateDaily(dates[0], dates[0], undefined, version)
+      expect(daily.level.generatorVersion).toBe(version)
+      expect(daily.level.roomTypes).toHaveLength(2)
+      expect(daily.witnesses.every(board => validate(daily.level, board).complete)).toBe(true)
+    }
+  })
+
+  it('同日同尺寸的不同种子会改变轮廓，旋转和镜像视为同形', () => {
+    const shapes = new Set<string>()
+    for (let i = 0; i < 64; i++) {
+      const { level } = generateDaily('2026-11-12', `outline-${i}`, 8)
+      shapes.add(outlineKey(outlineRows(level.usable, level.width)))
+    }
+    expect(shapes.size).toBeGreaterThanOrEqual(48)
   })
 
   it('验证 1,000 个可复现种子的面积余量和全部见证', () => {
@@ -172,17 +214,24 @@ describe('关卡与存档', () => {
       tiers.add(daily.level.difficulty!)
       outlines.add(daily.quality.outline)
       daily.quality.groups.forEach(group => groups.add(group))
-      const [min, max, count] = daily.level.difficulty === '入门' ? [.25, .4, 4] :
-        daily.level.difficulty === '标准' ? [.15, .3, 3] : [.1, .2, 2]
-      if (daily.quality.spare < min || daily.quality.spare > max || new Set(daily.quality.witnessKeys).size < count ||
-          daily.witnesses.some(board => !validate(daily.level, board).complete)) {
+      const count = daily.level.difficulty === '入门' ? 4 : daily.level.difficulty === '标准' ? 3 : 2
+      const usable = daily.level.usable.filter(Boolean).length
+      const roomCount = daily.level.roomTypes.length
+      const distinctPlans = new Set(daily.witnesses.map(board => board.roomTypes.join(',')))
+      const expectedSpare = roomCount * (count - 1) / usable
+      const indoor = daily.witnesses[0].roomTypes.map(type => type !== null && type !== 'balcony')
+      if (roomCount < 4 || !hasTwoCellSetback(outlineRows(daily.level.usable, daily.level.width)) ||
+          !hasTwoCellSetback(outlineRows(indoor, daily.level.width)) ||
+          Math.abs(daily.quality.spare - expectedSpare) > 1e-8 ||
+          daily.level.initial.roomTypes.filter(Boolean).length !== 1 || distinctPlans.size < count ||
+          new Set(daily.quality.witnessKeys).size < count || daily.witnesses.some(board => !validate(daily.level, board).complete)) {
         throw new Error(`种子 mvp-check-${i} 不满足发布条件。`)
       }
     }
     expect(sizes.size).toBe(9)
     expect(tiers.size).toBe(3)
     expect(groups.size).toBe(5)
-    expect(outlines.size).toBe(7)
+    expect(outlines).toEqual(new Set(['侧翼退台', '双翼错台', '外挑阳台']))
     console.info(`生成压测 mvp-check-0 至 mvp-check-999，${Math.round(performance.now() - start)} ms，最慢生成 ${worst.toFixed(1)} ms`)
   }, 30_000)
 })

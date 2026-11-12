@@ -3,9 +3,10 @@ import { blank, versions } from '../domain/model.ts'
 import type { Board, Constraint, Edge, Level, Opening, RoomType } from '../domain/model.ts'
 import { maskBoard, shellMask, shellNames } from '../domain/shell.ts'
 import { validate } from '../domain/validate.ts'
+import { residentialDaily } from './residential.ts'
 
-export const generatorVersion = '3'
-export const generatorVersions = ['1', '2', generatorVersion] as const
+export const generatorVersion = '5'
+export const generatorVersions = ['1', '2', '3', '4', generatorVersion] as const
 export type GeneratorVersion = typeof generatorVersions[number]
 export const dateInSingapore = (time = new Date()) => new Date(time.getTime() + 8 * 3600_000).toISOString().slice(0, 10)
 export const validDate = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) &&
@@ -36,6 +37,7 @@ function key(board: Board) {
 
 function candidate(date: string, seed: string, attempt: number, size: number | undefined, version: GeneratorVersion): Daily | undefined {
   const random = randomFor(`${seed}:${attempt}`)
+  if (version === '4' || version === '5') return residentialDaily(date, seed, size, attempt, random, key, version)
   const tier = random(3)
   const n = size ?? (8 + random(9))
   const type: RoomType = tier === 0 ? (random(2) ? 'study' : 'dining') : 'bedroom'
