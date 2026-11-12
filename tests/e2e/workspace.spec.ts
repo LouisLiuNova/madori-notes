@@ -62,7 +62,7 @@ test('矩形手势只记一次历史，撤销、重做、刷新和通关解锁',
   await page.getByRole('button', { name: '提交图纸' }).click()
   await expect(page.getByRole('dialog', { name: '委托已完成' })).toBeVisible()
   await page.getByRole('button', { name: '下一关' }).click()
-  await expect(page.getByRole('heading', { name: '一室相连' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '一室相连' })).toBeFocused()
   expect(errors).toEqual([])
 })
 
@@ -87,7 +87,9 @@ test('键盘画图、提示返回、焦点恢复、参考图不提交', async ({
   await hint.click()
   await page.getByRole('button', { name: '查看参考图' }).click()
   await expect(page.getByRole('button', { name: '提交图纸' })).toBeDisabled()
-  await page.getByRole('button', { name: '返回编辑' }).click()
+  await expect(page.getByRole('button', { name: '返回编辑' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.getByText('平面图', { exact: true })).toBeFocused()
   await expect(page.getByText('还有 3 格尚未分配。')).toBeVisible()
 })
 
@@ -314,6 +316,68 @@ test('日题可直接进入，重载后继续原图', async ({ page }) => {
   await expect(page.locator('.cell-empty')).toHaveCount(initial - 1)
 })
 
+test('慢速日题显示加载状态，返回章节后可以重新打开', async ({ page }) => {
+  const started = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  await page.route('**/api/health', route => route.fulfill({ json: { status: 'ok', cloud: true } }))
+  let requests = 0
+  await page.route('**/api/daily?*', async route => {
+    if (++requests === 1) {
+      started.resolve()
+      await release.promise
+    }
+    await route.fulfill({ status: 503, json: {} })
+  })
+  await page.goto('/')
+  const nav = page.getByRole('navigation', { name: '主要导航' })
+  await nav.getByRole('button', { name: '每日挑战' }).click()
+  await started.promise
+  await expect(nav.getByRole('button', { name: '正在打开…' })).toBeDisabled()
+  await nav.getByRole('button', { name: '章节' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: /01 第一张平面图/ }).click()
+  const response = page.waitForResponse('**/api/daily?*')
+  release.resolve()
+  await (await response).finished()
+  await expect(page.getByRole('heading', { name: first })).toBeFocused()
+  await nav.getByRole('button', { name: '每日挑战' }).click()
+  await expect(page.getByRole('heading', { name: '每日建筑委托' })).toBeFocused()
+  await expect(page.getByRole('alert')).toHaveText('正式日题暂不可读取，已打开本地日题。')
+  expect(requests).toBe(2)
+})
+
+test('参考图加载可关闭，失败后可在提示弹窗重试', async ({ page }) => {
+  const date = '2026-11-12'
+  await page.clock.setFixedTime(new Date(`${date}T03:00:00Z`))
+  const { level, witnesses: [board] } = generateDaily(date)
+  const release = Promise.withResolvers<void>()
+  let requests = 0
+  await page.route('**/api/health', route => route.fulfill({ json: { status: 'ok', cloud: true } }))
+  await page.route('**/api/daily?*', route => route.fulfill({ json: { level } }))
+  await page.route('**/api/daily/solution', async route => {
+    const attempt = ++requests
+    if (attempt === 1) await release.promise
+    await route.fulfill(attempt === 2 ? { status: 503, json: {} } : { json: { board } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: '每日挑战', exact: true }).click()
+  const hint = page.getByRole('button', { name: '查看提示' })
+  const dialog = page.getByRole('dialog', { name: '委托提示' })
+  await hint.click()
+  await dialog.getByRole('button', { name: '查看参考图' }).click()
+  await expect(dialog.getByRole('button', { name: '正在打开参考图…' })).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(hint).toBeFocused()
+  const response = page.waitForResponse('**/api/daily/solution')
+  release.resolve()
+  await (await response).finished()
+  await hint.click()
+  await dialog.getByRole('button', { name: '查看参考图' }).click()
+  await expect(dialog.getByRole('status')).toHaveText('参考图暂时无法读取，请重试。')
+  await dialog.getByRole('button', { name: '查看参考图' }).click()
+  await expect(page.getByRole('button', { name: '返回编辑' })).toBeFocused()
+  expect(requests).toBe(3)
+})
+
 test('触屏抽屉和单指绘图，窄屏无横向溢出', async ({ browser, baseURL }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, baseURL })
   const page = await context.newPage()
@@ -327,6 +391,38 @@ test('触屏抽屉和单指绘图，窄屏无横向溢出', async ({ browser, ba
   await expect(page.getByText('还有 14 格尚未分配。')).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await context.close()
+})
+
+test('320 像素触屏可定位问题并完整操作参考图，遵循减少动态效果偏好', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({
+    viewport: { width: 320, height: 700 }, hasTouch: true, isMobile: true, reducedMotion: 'reduce', baseURL,
+  })
+  try {
+    const page = await context.newPage()
+    await page.goto('/')
+    const plan = page.getByRole('application', { name: boardName })
+    const hint = page.getByRole('button', { name: '查看提示' })
+    const dialog = page.getByRole('dialog', { name: '委托提示' })
+    await hint.tap()
+    await expect(dialog).toHaveCSS('animation-name', 'none')
+    await dialog.getByRole('button', { name: '定位问题' }).tap()
+    await expect(plan.locator('.cell-mark').first()).toBeInViewport()
+    await expect(plan.locator('.cell').first()).toHaveCSS('transition-duration', '0s')
+
+    await hint.tap()
+    await dialog.getByRole('button', { name: '查看参考图' }).tap()
+    const center = page.getByRole('button', { name: '居中' })
+    await expect(center).toBeInViewport({ ratio: 1 })
+    await page.getByRole('button', { name: '放大' }).tap()
+    await center.tap()
+    await expect(page.getByText('100%', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '目录', exact: true }).tap()
+    const palette = page.getByRole('dialog', { name: '绘图目录' })
+    await expect(palette.getByRole('button', { name: '客厅', exact: true })).toBeDisabled()
+    await expect(palette.getByRole('checkbox', { name: '动线' })).toBeEnabled()
+  } finally {
+    await context.close()
+  }
 })
 
 test('导出和导入提供可读取的存档', async ({ page }) => {
