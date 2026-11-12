@@ -15,14 +15,14 @@
   --drawing: #f8f4e9;
   --grid: #e5dece;
   --tile-line: #9b9e85;
-  --living: #dce4ce;
-  --hall: #ece0c8;
-  --bedroom: #e9d7dc;
-  --dining: #eed9c0;
-  --kitchen: #d1e3dc;
-  --bath: #d4e1eb;
-  --study: #dcd8ea;
-  --balcony: #c9deba;
+  --living: #c4deb5;
+  --hall: #eee5ad;
+  --bedroom: #edc0ca;
+  --dining: #ebc5a1;
+  --kitchen: #c7e4e4;
+  --bath: #afd2e7;
+  --study: #cfc1eb;
+  --balcony: #e9f2df;
   --body: 'Instrument Sans', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
   --display: 'Noto Serif CJK SC', 'Songti SC', 'SimSun', Georgia, serif;
   --mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
@@ -33,27 +33,33 @@
   --background: #e8eee5; --surface: #f5f8f0; --surface-soft: #edf3e9;
   --ink: #23362c; --muted: #495e4f; --border: #c1d0c0;
   --accent: #2f644d; --accent-soft: #dcece0; --accent-line: #699581;
-  --drawing: #f1f5e9; --grid: #dce5d7; --living: #cbe2c7; --hall: #e7e9cb;
+  --drawing: #f1f5e9; --grid: #dce5d7;
+  --living: #b6d1a7; --hall: #eaead3; --kitchen: #b6e0d3; --bath: #c3d8f4; --study: #d0c0eb; --balcony: #d3e4ad;
 }
 :root[data-theme="iris"] {
   --background: #eee9f1; --surface: #fdf8fc; --surface-soft: #f5edf5;
   --ink: #362b3d; --muted: #5d4e66; --border: #d7cadd;
   --accent: #754980; --accent-soft: #eee0f1; --accent-line: #9e73aa;
-  --drawing: #f7f0f6; --grid: #e8dce9; --living: #dfd8ee; --hall: #eadbdc;
+  --drawing: #f7f0f6; --grid: #e8dce9;
+  --living: #d6c0ef; --hall: #f4dad4; --bedroom: #e7b6c4;
+  --kitchen: #c7e5e1; --bath: #bdd6f7; --study: #b0c2dd;
 }
 :root[data-theme="blueprint"] {
   --background: #e0e9f3; --surface: #f2f7fc; --surface-soft: #e8f0f8;
   --ink: #182f4a; --muted: #3e5871; --border: #b9cbdd;
   --accent: #a23f22; --accent-soft: #f6e4d9; --accent-line: #bc7257;
-  --drawing: #edf4fb; --grid: #d5e4f1; --tile-line: #7591a8; --living: #d3e7f2; --hall: #e2e7ee;
+  --drawing: #edf4fb; --grid: #d5e4f1; --tile-line: #7591a8;
+  --living: #b2d4fb; --hall: #e4eaf5; --kitchen: #c5e1bf; --bath: #a2d9d8; --study: #cebfe6; --balcony: #e9eebd;
   --display: var(--body); --radius: 2px;
 }
 :root[data-theme="bauhaus"] {
   --background: #eee9d9; --surface: #fffaf0; --surface-soft: #f5efde;
   --ink: #1c2024; --muted: #4c4b46; --border: #a9a18d;
   --accent: #b12924; --accent-soft: #f5dfd6; --accent-line: #b44d41;
-  --drawing: #faf1d8; --grid: #e6d7b2; --living: #f3dd82; --hall: #d4e4f2;
-  --bedroom: #eeb7af; --study: #b6d6ed; --display: var(--body); --radius: 0px;
+  --drawing: #faf1d8; --grid: #e6d7b2;
+  --living: #f2dd82; --hall: #bcd2f4; --bedroom: #eeb5b3; --dining: #efc499;
+  --kitchen: #cee4bb; --bath: #93d3c8; --study: #c4b9e4; --balcony: #ece9db;
+  --display: var(--body); --radius: 0px;
 }
 
 
@@ -62,29 +68,33 @@
   --ink: #f4ebd9; --muted: #ccc0aa; --border: #615746; --accent: #f4a38a;
   --on-accent: #332019; --accent-soft: #4b332b; --accent-line: #b0755e;
   --green: #bddebc; --green-soft: #314636; --drawing: #292a22; --grid: #3d3d30;
-  --tile-line: #a8a898; --living: #3c5039; --hall: #53482e; --bedroom: #5b4050; --dining: #5b4534;
-  --kitchen: #354f48; --bath: #344e60; --study: #4b405e; --balcony: #365635;
+  --tile-line: #a8a898; --living: #38513a; --hall: #5b572c; --bedroom: #5d404e; --dining: #6f462d;
+  --kitchen: #37615b; --bath: #2f4d69; --study: #524271; --balcony: #486a33;
 }
 :root[data-mode="dark"][data-theme="bamboo"] {
   --background: #1b2a23; --surface: #26362b; --surface-soft: #304134; --ink: #eef4df;
   --border: #53685a; --accent: #a6ddb7; --accent-soft: #334d3b; --accent-line: #7aab89;
-  --drawing: #222f25; --grid: #344437; --living: #3a6041; --hall: #4d4c36;
+  --drawing: #222f25; --grid: #344437;
+  --living: #3b5f36; --hall: #4c4c37; --kitchen: #35615e; --balcony: #596c34;
 }
 :root[data-mode="dark"][data-theme="iris"] {
   --background: #2a2434; --surface: #352c3e; --surface-soft: #41344c; --ink: #f6ebfa;
   --border: #685771; --accent: #e6b5ed; --accent-soft: #503953; --accent-line: #ad7cb5;
-  --drawing: #312839; --grid: #46384f; --living: #4b4167; --hall: #55414e;
+  --drawing: #312839; --grid: #46384f;
+  --living: #574376; --hall: #5f554e; --bedroom: #713f58; --dining: #71452a; --study: #38395b;
 }
 :root[data-mode="dark"][data-theme="blueprint"] {
   --background: #142740; --surface: #1b3553; --surface-soft: #224364; --ink: #f1f7fc;
   --border: #4d6c8b; --accent: #ffae7e; --accent-soft: #51443e; --accent-line: #c98c6c;
-  --drawing: #1e3a5f; --grid: #365575; --tile-line: #779bc1; --living: #2b5276; --hall: #3d5070;
+  --drawing: #1e3a5f; --grid: #365575; --tile-line: #779bc1;
+  --living: #2e5885; --hall: #3f4861; --bedroom: #5e3f4d; --kitchen: #395640; --bath: #32696d; --study: #5c4b77;
 }
 :root[data-mode="dark"][data-theme="bauhaus"] {
   --background: #1e2023; --surface: #282b30; --surface-soft: #30363e; --ink: #fff5db;
   --border: #736b5d; --accent: #f69584; --accent-soft: #542f30; --accent-line: #d4665b;
-  --drawing: #292a25; --grid: #454437; --living: #655424; --hall: #364c72;
-  --bedroom: #713d3b; --study: #344e72;
+  --drawing: #292a25; --grid: #454437;
+  --living: #5f5622; --hall: #375687; --bedroom: #713c3c; --dining: #7b4d2e;
+  --kitchen: #3b564d; --bath: #29686a; --study: #574571; --balcony: #4f6b36;
 }
 :root[data-mode="light"] { color-scheme: light; }
 :root[data-mode="dark"] { color-scheme: dark; }
@@ -206,7 +216,7 @@ progress::-moz-progress-bar { background: var(--accent); }
 .north-arrow text { font-weight: 700; }
 .room-label rect { fill: var(--surface); stroke: var(--tile-line); stroke-width: .014; }
 .room-label text { font-size: .21px; font-weight: 700; }
-.room-label .room-size { font-size: .15px; font-weight: 400; fill: var(--muted); }
+.room-label .room-size { font-size: .15px; font-weight: 400; }
 .cell-mark, .cell-hover { fill: var(--accent); fill-opacity: .13; stroke: var(--accent); stroke-width: .04; }
 .cell-mark { stroke-dasharray: .08 .05; }
 .path-dot, .use-cell { fill: var(--green); }
@@ -366,14 +376,6 @@ progress::-moz-progress-bar { background: var(--accent); }
   --drawing: #f9f6e9;
   --grid: #ded6be;
   --tile-line: #898670;
-  --living: #d1e7c8;
-  --hall: #e7eab5;
-  --bedroom: #ebcdd7;
-  --dining: #f0d4b6;
-  --kitchen: #cee1ec;
-  --bath: #c5e2dc;
-  --study: #dcd5e8;
-  --balcony: #d5e4b3;
   --display: 'Kaiti SC', STKaiti, KaiTi, 'Noto Serif CJK SC', 'Songti SC', SimSun, Georgia, serif;
   --radius: 3px;
 }
@@ -386,8 +388,6 @@ progress::-moz-progress-bar { background: var(--accent); }
   --background: #2a2821; --surface: #363329; --surface-soft: #3b382d; --ink: #f5ead4; --muted: #cec4ad;
   --border: #70644f; --accent: #b7dcaa; --on-accent: #1e3023; --accent-soft: #354a37; --accent-line: #89aa7e;
   --green: #b6ddb7; --green-soft: #354b3b; --drawing: #2b2b23; --grid: #474537;
-  --tile-line: #a8a898; --living: #3b523a; --hall: #514f31; --bedroom: #5c4050; --dining: #5b4534;
-  --kitchen: #364c60; --bath: #354f48; --study: #4e435c; --balcony: #405734;
 }
 :root { --desk-texture: repeating-linear-gradient(0deg, transparent 0 17px, var(--desk-line) 18px, transparent 19px 32px); }
 body { background: var(--desk-texture), var(--desk); }
