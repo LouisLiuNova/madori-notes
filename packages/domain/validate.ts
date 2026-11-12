@@ -2,9 +2,11 @@ import { catalog, footprint, occupied, usage } from './catalog.ts'
 import { delta, edgeAt, edgesOf, index, point, segment, shiftEdge, sides, turn } from './geometry.ts'
 import { directions, rooms, versions } from './model.ts'
 import type { Board, Constraint, Edge, Furniture, Level, Opening, Result, RoomPredicate, RoomType } from './model.ts'
+import { fitsOpening, wallBoundary } from './openings.ts'
+import type { Boundary } from './openings.ts'
 import { isBoard } from './schema.ts'
 
-export type Boundary = 'none' | 'wall' | 'bearing' | 'railing' | 'exterior' | 'open' | 'window' | 'swing' | 'sliding' | 'pocket'
+export type { Boundary } from './openings.ts'
 export interface Room {
   type: RoomType
   cells: number[]
@@ -81,14 +83,7 @@ export function validate(level: Level, board: Board): Report {
     empty.length ? `还有 ${empty.length} 格尚未分配。` : '已分配全部可用格。', empty))
 
   for (const edge of edgesOf(level)) {
-    const [a, b] = sides(level, edge)
-    const typeA = board.roomTypes[a]
-    const typeB = board.roomTypes[b]
-    let boundary: Boundary = 'wall'
-    if (bearing.has(edge)) boundary = 'bearing'
-    else if (a === -1 || b === -1) boundary = (typeA ?? typeB) === 'balcony' ? 'railing' : 'exterior'
-    else if (!typeA || !typeB || typeA === typeB) boundary = 'none'
-    boundaries.set(edge, boundary)
+    boundaries.set(edge, wallBoundary(level, board, edge, bearing.has(edge)))
   }
 
   const occupiedEdges = new Map<Edge, Opening>()
@@ -99,16 +94,11 @@ export function validate(level: Level, board: Board): Report {
   for (const [i, opening] of openings.entries()) {
     const { edge, kind } = opening
     const pocket = kind === 'sliding' ? shiftEdge(edge, opening.pocket) : undefined
-    const base = boundaries.get(edge)
     const fixed = i < level.fixed.length
     const [a, b] = sides(level, edge)
-    const bothAssigned = Boolean(board.roomTypes[a] && board.roomTypes[b])
-    const validWall = kind === 'window' ? base === 'exterior'
-      : kind === 'sliding' ? base === 'wall' && bothAssigned
-      : base === 'exterior' || (base === 'wall' && bothAssigned)
-    const validPocket = !pocket || (boundaries.get(pocket) === 'wall' &&
-      sides(level, pocket).every(cell => Boolean(board.roomTypes[cell])) && !openingEdges.has(pocket) && !occupiedEdges.has(pocket))
-    if ((!fixed && !level.openingTypes.includes(kind)) || !validWall || !validPocket || occupiedEdges.has(edge)) {
+    const validPocket = !pocket || (!openingEdges.has(pocket) && !occupiedEdges.has(pocket))
+    if ((!fixed && !level.openingTypes.includes(kind)) || !fitsOpening(opening, key => boundaries.get(key)) ||
+        !validPocket || occupiedEdges.has(edge)) {
       global.push(result(`opening-${i}`, 'conflict', '门窗须放在允许的墙段上，且洞口与收纳墙不能重叠。',
         [a, b].filter(cell => cell >= 0), pocket ? [edge, pocket] : [edge]))
       continue

@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { teaching } from '../../content/levels.ts'
 import { validate } from '../../packages/domain/validate.ts'
+import { generateDaily } from '../../packages/generator/daily.ts'
 
 const boardName = '平面图编辑区'
 const first = '第一张平面图'
@@ -87,6 +88,114 @@ test('键盘画图、提示返回、焦点恢复、参考图不提交', async ({
   await expect(page.getByRole('button', { name: '提交图纸' })).toBeDisabled()
   await page.getByRole('button', { name: '返回编辑' }).click()
   await expect(page.getByText('还有 3 格尚未分配。')).toBeVisible()
+})
+
+test('画笔擦除沿路径清格，矩形擦除按两个角清格并可一次撤销', async ({ page }) => {
+  await page.goto('/')
+  const plan = page.getByRole('application', { name: boardName })
+  const empty = plan.locator('.cell-empty')
+  const undo = page.getByRole('button', { name: '撤销', exact: true })
+  await expect(empty).toHaveCount(15)
+  await page.getByRole('button', { name: '画笔擦除', exact: true }).click()
+  await drag(page, [1.5, 4.5], [3.5, 6.5])
+  await expect(empty).toHaveCount(18)
+  await undo.click()
+  await expect(empty).toHaveCount(15)
+
+  await page.getByRole('button', { name: '矩形擦除', exact: true }).click()
+  const start = await at(page, 1.5, 4.5)
+  const far = await at(page, 4.5, 7.5)
+  const end = await at(page, 3.5, 6.5)
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await page.mouse.move(far.x, far.y)
+  await expect(empty).toHaveCount(31)
+  await page.mouse.move(end.x, end.y)
+  await page.mouse.up()
+  await expect(empty).toHaveCount(24)
+  await undo.click()
+  await expect(empty).toHaveCount(15)
+
+  await plan.focus()
+  await page.keyboard.press('Shift+E')
+  await expect(page.getByRole('button', { name: '矩形擦除', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await expect(empty).toHaveCount(19)
+})
+
+test('日题擦除范围可分别清除家具、房间和门窗，整图重置可撤销并保存', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-11-12T03:00:00Z'))
+  const { level, witnesses: [board] } = generateDaily('2026-11-12')
+  await page.goto('/')
+  await page.getByRole('button', { name: '本地存档' }).click()
+  await page.locator('input[type=file]').setInputFiles({
+    name: '日题草稿.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ schemaVersion: 1, saves: { [level.id]: { board, hints: 0 } } })),
+  })
+  await page.getByRole('button', { name: '采用导入草稿' }).click()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: '每日挑战', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '每日建筑委托' })).toBeVisible()
+  const scope = page.getByRole('combobox', { name: '擦除范围' })
+  const undo = page.getByRole('button', { name: '撤销', exact: true })
+  const reset = page.getByRole('button', { name: '重置图纸', exact: true })
+  const empty = page.locator('.cell-empty')
+  const furniture = page.locator('g.object')
+  const pocket = page.locator('.edge-pocket')
+  const openWalls = page.locator('.edge-open')
+  const fixedWindows = page.locator('g.edge-window')
+  await expect(furniture).toHaveCount(1)
+  await expect(openWalls).toHaveCount(3)
+
+  await scope.selectOption('furniture')
+  await click(page, 7.5, 7.5)
+  await expect(furniture).toHaveCount(0)
+  await expect(empty).toHaveCount(0)
+  await expect(pocket).toHaveCount(1)
+  await undo.click()
+
+  await scope.selectOption('openings')
+  await click(page, 9.5, 6.5)
+  await expect(pocket).toHaveCount(0)
+  await expect(furniture).toHaveCount(1)
+  await expect(empty).toHaveCount(0)
+  await undo.click()
+
+  await page.getByRole('button', { name: '矩形擦除', exact: true }).click()
+  await scope.selectOption('roomsFurniture')
+  await drag(page, [7.5, 6.5], [9.5, 8.5])
+  await expect(furniture).toHaveCount(0)
+  await expect(empty).toHaveCount(9)
+  await expect(page.locator('.edge-invalid')).toHaveCount(1)
+  await undo.click()
+
+  await scope.selectOption('all')
+  await drag(page, [3.5, 4.5], [9.5, 8.5])
+  await expect(furniture).toHaveCount(0)
+  await expect(openWalls).toHaveCount(1)
+  await expect(pocket).toHaveCount(0)
+  await expect(page.locator('.edge-invalid')).toHaveCount(0)
+  await expect(fixedWindows).toHaveCount(3)
+  await undo.click()
+
+  await reset.click()
+  await expect(reset).toBeDisabled()
+  await expect(empty).toHaveCount(level.usable.filter(Boolean).length - 1)
+  await expect(openWalls).toHaveCount(0)
+  await expect(fixedWindows).toHaveCount(3)
+  await undo.click()
+  await expect(furniture).toHaveCount(1)
+  await expect(pocket).toHaveCount(1)
+  await expect(openWalls).toHaveCount(3)
+  await page.getByRole('button', { name: '重做', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('已保存')
+  await page.reload()
+  await expect(reset).toBeDisabled()
+  await expect(empty).toHaveCount(level.usable.filter(Boolean).length - 1)
+  await expect(furniture).toHaveCount(0)
 })
 
 test('拉门在普通墙落位，撤销后保留原结构', async ({ page }) => {

@@ -1,8 +1,10 @@
 import { occupied } from '../../packages/domain/catalog.ts'
 import { edgeAt, index, point, shiftEdge, sides } from '../../packages/domain/geometry.ts'
-import type { Board, Direction, Edge, Level, RoomType } from '../../packages/domain/model.ts'
+import type { Board, Direction, Edge, Level, Opening, RoomType } from '../../packages/domain/model.ts'
+import { fitsOpening, wallBoundary } from '../../packages/domain/openings.ts'
 
-export type Tool = 'paint' | 'rect' | 'erase' | 'open' | 'wall' | 'swing' | 'sliding' | 'window' | 'furniture' | 'move' | 'remove'
+export type Tool = 'paint' | 'rect' | 'erase' | 'eraseRect' | 'open' | 'wall' | Opening['kind'] | 'furniture' | 'move' | 'remove'
+export type EraseScope = 'all' | 'roomsFurniture' | 'rooms' | 'furniture' | 'openings'
 export interface Hit { cell: number; edge: Edge }
 export interface Selection {
   tool: Tool
@@ -11,32 +13,72 @@ export interface Selection {
   rotation: Direction
   side: 0 | 1
   mirror: boolean
+  eraseScope: EraseScope
+}
+
+export const isRectangleTool = (tool: Tool) => tool === 'rect' || tool === 'eraseRect'
+export const isEraseTool = (tool: Tool) => tool === 'erase' || tool === 'eraseRect'
+export const isOpeningTool = (tool: Tool): tool is Opening['kind'] =>
+  tool === 'window' || tool === 'swing' || tool === 'sliding'
+
+function occupiesEdge(opening: Opening, edge: Edge) {
+  return opening.edge === edge || (opening.kind === 'sliding' && shiftEdge(opening.edge, opening.pocket) === edge)
+}
+
+export function openingAt(level: Level, board: Board, edge: Edge, { tool, side, mirror }: Selection): Opening | undefined {
+  if (!isOpeningTool(tool) || !level.openingTypes.includes(tool)) return
+  const opening: Opening = tool === 'window' ? { edge, kind: tool } : tool === 'swing' ?
+    { edge, kind: tool, side, hinge: mirror ? 1 : 0 } : { edge, kind: tool, pocket: mirror ? -1 : 1 }
+  if (!fitsOpening(opening, key => wallBoundary(level, board, key))) return
+  const segments = opening.kind === 'sliding' ? [edge, shiftEdge(edge, opening.pocket)] : [edge]
+  if (segments.some(key => board.openEdges.includes(key) ||
+      level.fixed.some(item => occupiesEdge(item, key)) ||
+      board.openings.some(item => item.edge !== edge && occupiesEdge(item, key)))) return
+  return opening
+}
+
+function erase(level: Level, board: Board, cells: Set<number>, scope: EraseScope): Board {
+  const clearRooms = scope === 'all' || scope === 'roomsFurniture' || scope === 'rooms'
+  const clearFurniture = scope === 'all' || scope === 'roomsFurniture' || scope === 'furniture'
+  const clearOpenings = scope === 'all' || scope === 'openings'
+  const touches = (edge: Edge) => sides(level, edge).some(cell => cells.has(cell))
+  const roomTypes = clearRooms && [...cells].some(cell => board.roomTypes[cell] !== null)
+    ? board.roomTypes.map((type, cell) => cells.has(cell) ? null : type) : board.roomTypes
+  const furniture = clearFurniture ? board.furniture.filter(item =>
+    !occupied(item).some(({ x, y }) => cells.has(index(level, x, y)))) : board.furniture
+  const openings = clearOpenings ? board.openings.filter(item =>
+    !touches(item.edge) && (item.kind !== 'sliding' || !touches(shiftEdge(item.edge, item.pocket)))) : board.openings
+  const openEdges = clearOpenings ? board.openEdges.filter(edge => !touches(edge)) : board.openEdges
+  if (roomTypes === board.roomTypes && furniture.length === board.furniture.length &&
+      openings.length === board.openings.length && openEdges.length === board.openEdges.length) return board
+  return { ...board, roomTypes, furniture, openings, openEdges }
 }
 
 export function edit(level: Level, board: Board, hit: Hit, selection: Selection, start: Hit, from = start): Board {
   const { cell, edge } = hit
   const { tool } = selection
-  if (tool === 'paint' || tool === 'rect' || tool === 'erase') {
+  if (tool === 'paint' || isEraseTool(tool) || isRectangleTool(tool)) {
     if (cell < 0 || from.cell < 0) return board
     const a = point(level.width, from.cell)
     const b = point(level.width, cell)
-    const next = board.roomTypes.slice()
-    const assign = (x: number, y: number) => {
+    const cells = new Set<number>()
+    const visit = (x: number, y: number) => {
       const i = index(level, x, y)
-      if (i >= 0) next[i] = tool === 'erase' ? null : selection.room
+      if (i >= 0) cells.add(i)
     }
-    if (tool === 'rect') {
+    if (isRectangleTool(tool)) {
       for (let y = Math.min(a.y, b.y); y <= Math.max(a.y, b.y); y++) {
-        for (let x = Math.min(a.x, b.x); x <= Math.max(a.x, b.x); x++) assign(x, y)
+        for (let x = Math.min(a.x, b.x); x <= Math.max(a.x, b.x); x++) visit(x, y)
       }
     } else {
       const steps = Math.max(1, Math.abs(a.x - b.x), Math.abs(a.y - b.y))
       for (let step = 0; step <= steps; step++) {
-        assign(Math.round(a.x + (b.x - a.x) * step / steps), Math.round(a.y + (b.y - a.y) * step / steps))
+        visit(Math.round(a.x + (b.x - a.x) * step / steps), Math.round(a.y + (b.y - a.y) * step / steps))
       }
     }
-    if (next.every((type, i) => type === board.roomTypes[i])) return board
-    return { ...board, roomTypes: next }
+    if (isEraseTool(tool)) return erase(level, board, cells, selection.eraseScope)
+    if ([...cells].every(cell => board.roomTypes[cell] === selection.room)) return board
+    return { ...board, roomTypes: board.roomTypes.map((type, cell) => cells.has(cell) ? selection.room : type) }
   }
   if (tool === 'open' || tool === 'wall') {
     if (level.bearing.includes(edge) || level.fixed.some(item => item.edge === edge)) return board
@@ -46,14 +88,13 @@ export function edit(level: Level, board: Board, hit: Hit, selection: Selection,
     }
     const [a, b] = sides(level, edge)
     if (!board.roomTypes[a] || !board.roomTypes[b] || board.roomTypes[a] === board.roomTypes[b] ||
-        board.openEdges.includes(edge) || board.openings.some(item => item.edge === edge ||
-          (item.kind === 'sliding' && shiftEdge(item.edge, item.pocket) === edge))) return board
+        board.openEdges.includes(edge) || board.openings.some(item => occupiesEdge(item, edge))) return board
     return { ...board, openEdges: [...board.openEdges, edge] }
   }
   const at = (source: number) => board.furniture.slice().reverse().find(item =>
     occupied(item).some(p => index(level, p.x, p.y) === source))
   if (tool === 'remove') {
-    const opening = board.openings.find(item => item.edge === edge || (item.kind === 'sliding' && shiftEdge(item.edge, item.pocket) === edge))
+    const opening = board.openings.find(item => occupiesEdge(item, edge))
     if (opening) return { ...board, openings: board.openings.filter(item => item !== opening) }
     const object = at(cell)
     if (!object) return board
@@ -74,13 +115,9 @@ export function edit(level: Level, board: Board, hit: Hit, selection: Selection,
     return { ...board, furniture: [...board.furniture, { ...target, type: selection.furniture,
       rotation: selection.rotation, id: crypto.randomUUID() }] }
   }
-  if (!level.openingTypes.includes(tool) || level.fixed.some(item => item.edge === edge) ||
-      level.bearing.includes(edge) || sides(level, edge).every(cell => cell < 0)) return board
-  const rest = board.openings.filter(item => item.edge !== edge)
-  const opening = tool === 'window' ? { edge, kind: 'window' } as const : tool === 'swing' ?
-    { edge, kind: 'swing', side: selection.side, hinge: Number(selection.mirror) as 0 | 1 } as const :
-    { edge, kind: 'sliding', pocket: selection.mirror ? -1 : 1 } as const
-  return { ...board, openings: [...rest, opening], openEdges: board.openEdges.filter(key => key !== edge) }
+  const opening = openingAt(level, board, edge, selection)
+  if (!opening) return board
+  return { ...board, openings: [...board.openings.filter(item => item.edge !== edge), opening] }
 }
 
 export function keyboardHit(level: Level, cell: number, side: number): Hit {

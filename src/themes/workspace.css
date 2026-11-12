@@ -228,6 +228,8 @@ progress::-moz-progress-bar { background: var(--accent); }
 .history-group { border-left: 1px solid var(--border); padding-left: 7px; }
 .tool-btn { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 10px; border-radius: var(--radius); font-size: 13px; }
 .tool-btn:hover:not(:disabled) { color: var(--accent); }
+.erase-scope { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.erase-scope select { min-height: 44px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
 .mobile-palette { display: none; margin-left: auto; }
 .palette-heading { display: flex; align-items: center; gap: 6px; margin: 18px 0 8px; font-size: 12px; color: var(--muted); font-weight: 700; }
 .palette-heading svg { color: var(--accent); }
@@ -321,6 +323,7 @@ progress::-moz-progress-bar { background: var(--accent); }
   .sheet-actions .plain { padding-inline: 4px; }
   .toolbar { gap: 3px; padding: 4px; }
   .tool-btn { padding-inline: 6px; gap: 3px; font-size: 11px; }
+  .erase-scope { font-size: 11px; }
   .history-group { padding-left: 2px; gap: 0; }
   .mobile-palette { padding-inline: 6px; font-size: 12px; gap: 3px; }
   .footer { flex-wrap: wrap; justify-content: start; padding-top: 10px; gap: 0 12px; }

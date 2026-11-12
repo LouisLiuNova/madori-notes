@@ -18,7 +18,8 @@ import { api, useCloud } from './cloud.ts'
 import Plan from '../components/Plan.tsx'
 import { centered, layers } from './planView.ts'
 import type { Layer } from './planView.ts'
-import type { Selection, Tool } from './editor.ts'
+import { isEraseTool, isRectangleTool } from './editor.ts'
+import type { EraseScope, Selection, Tool } from './editor.ts'
 import { mergeSaves, readArchive, readSaves, writeSaves } from './storage.ts'
 import type { Save, Saves } from './storage.ts'
 import { useReport } from './useReport.ts'
@@ -33,12 +34,19 @@ type ModalName = 'chapters' | 'about' | 'theme' | 'hint' | 'result' | 'storage' 
 type Session = { level: Level; reference: () => Promise<Board>; number?: number }
 const lesson = (i: number): Session => ({ ...teaching[i], reference: async () => teaching[i].reference, number: i + 1 })
 const symbols: Record<Tool, typeof Paintbrush> = {
-  paint: Paintbrush, rect: SquareDashed, erase: Eraser, open: DoorOpen, wall: Grid2X2, swing: DoorOpen,
+  paint: Paintbrush, rect: SquareDashed, erase: Eraser, eraseRect: Eraser, open: DoorOpen, wall: Grid2X2, swing: DoorOpen,
   sliding: PanelsTopLeft, window: PanelsTopLeft, furniture: Layers3, move: MousePointer2, remove: Trash2,
 }
 const toolNames: Record<Tool, string> = {
-  paint: '画笔', rect: '矩形', erase: '擦除', open: '开放', wall: '恢复隔墙', swing: '推门', sliding: '拉门',
+  paint: '画笔', rect: '矩形', erase: '画笔擦除', eraseRect: '矩形擦除', open: '开放', wall: '恢复隔墙', swing: '推门', sliding: '拉门',
   window: '外窗', furniture: '家具', move: '移动家具', remove: '移除物件',
+}
+const eraseScopes: Record<EraseScope, string> = {
+  all: '擦除全部（含门窗与墙）',
+  roomsFurniture: '房间和家具',
+  rooms: '仅房间',
+  furniture: '仅家具',
+  openings: '仅门窗与墙体改动',
 }
 
 function preference(key: string) {
@@ -76,7 +84,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const [history, setHistory] = useState(() => ({ boards: [save?.board ?? level.initial], position: 0 }))
   const [draft, setDraft] = useState<Board | null>(null)
   const [selection, select] = useState<Selection>({ tool: 'paint', room: level.roomTypes[0], furniture: level.furnitureTypes[0] ?? '',
-    rotation: 'N', side: 0, mirror: false })
+    rotation: 'N', side: 0, mirror: false, eraseScope: 'rooms' })
   const [view, setView] = useState(centered)
   const [visibleLayers, setLayers] = useState<Layer[]>(['分区', '结构'])
   const [selectedRule, setRule] = useState('')
@@ -86,6 +94,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const [reference, setReference] = useState<Board | null>(null)
   const [message, setMessage] = useState('')
   const board = history.boards[history.position]
+  const atInitial = board === level.initial || JSON.stringify(board) === JSON.stringify(level.initial)
   const visibleBoard = reference ?? draft ?? board
   const report = useReport(level, visibleBoard)
   const results = [...report.level, ...report.global]
@@ -112,6 +121,11 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     persist(history.boards[position])
   }
 
+  function resetBoard() {
+    commit(level.initial)
+    setRule('')
+  }
+
   function chooseTool(tool: Tool) {
     select({ ...selection, tool, rotation: tool === 'move' ? 'N' : selection.rotation })
   }
@@ -129,7 +143,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         event.preventDefault()
         navigateHistory(key === 'y' || event.shiftKey ? 1 : -1)
       } else if (!event.ctrlKey && !event.metaKey && !event.altKey) {
-        const tools: Partial<Record<string, Tool>> = { b: 'paint', m: 'rect', e: 'erase' }
+        const tools: Partial<Record<string, Tool>> = { b: 'paint', m: 'rect', e: event.shiftKey ? 'eraseRect' : 'erase' }
         if (tools[key]) chooseTool(tools[key])
         if (key === 'r') rotate()
         if (key === 'f') select({ ...selection, mirror: !selection.mirror })
@@ -172,7 +186,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     <div className="room-options">
       {level.roomTypes.map(type => <button className="room-option" key={type}
         aria-pressed={selection.room === type && ['paint', 'rect'].includes(selection.tool)}
-        onClick={() => select({ ...selection, room: type, tool: selection.tool === 'rect' ? 'rect' : 'paint' })}>
+        onClick={() => select({ ...selection, room: type, tool: isRectangleTool(selection.tool) ? 'rect' : 'paint' })}>
         <span className={`swatch room-${type}`} />{rooms[type]}
         {selection.room === type && ['paint', 'rect'].includes(selection.tool) && <Check className="choice-check" size={15} />}
       </button>)}
@@ -272,17 +286,25 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
           </div>
           <div className="toolbar">
             <div className="toolbar-group">
-              {(['paint', 'rect', 'erase'] as const).map((tool, i) => {
+              {(['paint', 'rect', 'erase', 'eraseRect'] as const).map((tool, i) => {
                 const Icon = symbols[tool]
                 return <button className="tool-btn" key={tool} disabled={Boolean(reference)} aria-pressed={selection.tool === tool}
-                  title={`${toolNames[tool]} (${['B', 'M', 'E'][i]})`} onClick={() => chooseTool(tool)}><Icon size={17} />{toolNames[tool]}</button>
+                  title={`${toolNames[tool]} (${['B', 'M', 'E', 'Shift+E'][i]})`} onClick={() => chooseTool(tool)}><Icon size={17} />{toolNames[tool]}</button>
               })}
             </div>
+            <label className="erase-scope">擦除范围
+              <select disabled={Boolean(reference)} value={selection.eraseScope} onChange={event => select({ ...selection,
+                tool: isEraseTool(selection.tool) ? selection.tool : 'erase', eraseScope: event.target.value as EraseScope })}>
+                {Object.entries(eraseScopes).map(([scope, label]) => <option key={scope} value={scope}>{label}</option>)}
+              </select>
+            </label>
             <div className="toolbar-group history-group">
               <button className="icon-btn" aria-label="撤销" title="撤销 (Ctrl/⌘ Z)" disabled={!history.position || Boolean(reference)}
                 onClick={() => navigateHistory(-1)}><Undo2 size={18} /></button>
               <button className="icon-btn" aria-label="重做" title="重做 (Ctrl/⌘ Shift Z)" disabled={history.position === history.boards.length - 1 || Boolean(reference)}
                 onClick={() => navigateHistory(1)}><Redo2 size={18} /></button>
+              <button className="tool-btn" title="恢复本关起始图纸，可撤销" disabled={atInitial || Boolean(draft || reference)}
+                onClick={resetBoard}>重置图纸</button>
             </div>
             <button className="mobile-palette plain" onClick={() => setModal('drawer')}><Layers3 size={17} />目录</button>
           </div>
@@ -305,9 +327,11 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         <li>涂绘所有可用格。同类四向连成一间房；承重墙完全截断时才分房。</li>
         <li>面积和数量都是下限。房间须有门或开放边界，并有至少一格可到达主入口。</li>
         <li>家具不能堵住门洞，需使用的家具须保留至少一个可达使用格。家具可移动，地毯可与家具叠放。</li>
-        <li>拉门需要一格洞口和一格收纳墙。Wi-Fi 半径以格中心计算，跨墙覆盖取并集。</li>
+        <li>推门可放在普通隔墙或外墙，外窗只可放在外墙。拉门需要连续两段普通隔墙，分别作为洞口和收纳墙。</li>
+        <li>Wi-Fi 半径以格中心计算，跨墙覆盖取并集。</li>
         <li>图示以 1 格对应 1000 mm 标注定位轴线和轮廓尺寸。委托条件仍以格数计算。</li>
-        <li>画笔 B，矩形 M，擦除 E，旋转 R，镜像 F。图纸聚焦时用方向键选择格子，按 Enter 应用工具。</li>
+        <li>画笔 B，矩形 M，画笔擦除 E，矩形擦除 Shift+E，旋转 R，镜像 F。用方向键选格，按 Enter 应用工具。矩形工具用 Enter 分别选定两个角。</li>
+        <li>画笔和矩形共用擦除范围。擦除全部会清除选区内的房间、家具、玩家门窗和墙体改动，固定结构保留。</li>
       </ul>
     </Modal>}
     {modal === 'hint' && <Modal title="委托提示" close={() => setModal(null)}>

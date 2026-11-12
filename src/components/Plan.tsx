@@ -7,8 +7,8 @@ import { edgeAt, index, point, segment, shiftEdge, turn } from '../../packages/d
 import { directions, rooms } from '../../packages/domain/model.ts'
 import type { Board, Edge, Level, Opening, Result } from '../../packages/domain/model.ts'
 import type { Report } from '../../packages/domain/validate.ts'
-import { edit, keyboardHit } from '../app/editor.ts'
-import type { Hit, Selection } from '../app/editor.ts'
+import { edit, isOpeningTool, isRectangleTool, keyboardHit, openingAt } from '../app/editor.ts'
+import type { Hit, Selection, Tool } from '../app/editor.ts'
 
 import type { Layer, View } from '../app/planView.ts'
 
@@ -57,13 +57,18 @@ export default function Plan({ level, board, report, selection, layers, highligh
   const [hover, setHover] = useState<Hit | null>(null)
   const [cursor, setCursor] = useState(() => Math.max(0, level.usable.findIndex(Boolean)))
   const [keyboardSide, setKeyboardSide] = useState(0)
-  const [keyboardStart, setKeyboardStart] = useState<Hit | null>(null)
+  const [keyboardAnchor, setKeyboardAnchor] = useState<{ hit: Hit; tool: Tool } | null>(null)
+  const keyboardStart = keyboardAnchor?.tool === selection.tool ? keyboardAnchor.hit : null
+  if (keyboardAnchor && !keyboardStart) setKeyboardAnchor(null)
   const width = level.width + 3.15
   const height = level.height + 2.47
   const highlightCells = new Set(highlight?.cells)
   const highlightEdges = new Set(highlight?.edges)
   const outline = new Set(report.global.filter(item => item.status === 'conflict').flatMap(item => item.objects))
+  const invalidOpenings = new Set(report.global.filter(item => item.status === 'conflict' && item.id.startsWith('opening-')).map(item => item.id))
   const structure = layers.includes('结构')
+  const canHighlight = (edge: Edge) => !isOpeningTool(selection.tool) || Boolean(openingAt(level, board, edge, selection))
+  const cursorEdge = keyboardHit(level, cursor, keyboardSide).edge
 
   function hit(event: PointerEvent<SVGSVGElement>): Hit | null {
     const element = svg.current
@@ -74,7 +79,9 @@ export default function Plan({ level, board, report, selection, layers, highligh
     const y = Math.min(level.height - 1, Math.max(0, Math.floor(coords.y)))
     if (coords.x < -.35 || coords.x > level.width + .35 || coords.y < -.35 || coords.y > level.height + .35) return null
     const distances = [Math.abs(coords.y - y), Math.abs(x + 1 - coords.x), Math.abs(y + 1 - coords.y), Math.abs(coords.x - x)]
-    return { cell: index(level, x, y), edge: edgeAt({ x, y }, distances.indexOf(Math.min(...distances))) }
+    const distance = Math.min(...distances)
+    if (isOpeningTool(selection.tool) && distance > .28) return null
+    return { cell: index(level, x, y), edge: edgeAt({ x, y }, distances.indexOf(distance)) }
   }
 
   function pointerDown(event: PointerEvent<SVGSVGElement>) {
@@ -117,9 +124,9 @@ export default function Plan({ level, board, report, selection, layers, highligh
     setHover(target)
     const action = gesture.current
     if (!action || action.id !== event.pointerId || !target || (action.last.cell === target.cell && action.last.edge === target.edge)) return
-    if (selection.tool === 'rect' || selection.tool === 'move') {
+    if (isRectangleTool(action.selection.tool) || action.selection.tool === 'move') {
       action.next = edit(level, action.before, target, action.selection, action.start)
-    } else if (placeTools.has(selection.tool)) {
+    } else if (placeTools.has(action.selection.tool)) {
       action.next = edit(level, action.next, target, action.selection, action.start, action.last)
     }
     action.last = target
@@ -152,17 +159,20 @@ export default function Plan({ level, board, report, selection, layers, highligh
       }
       return
     }
-    if (event.key === 'Escape') { setKeyboardStart(null); return }
+    if (event.key === 'Escape') { setKeyboardAnchor(null); return }
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     const target = keyboardHit(level, cursor, keyboardSide)
-    if ((selection.tool === 'rect' || selection.tool === 'move') && !keyboardStart) { setKeyboardStart(target); return }
+    if ((isRectangleTool(selection.tool) || selection.tool === 'move') && !keyboardStart) {
+      setKeyboardAnchor({ hit: target, tool: selection.tool })
+      return
+    }
     const start = keyboardStart ?? target
     const object = selection.tool === 'move' ? board.furniture.slice().reverse().find(item =>
       occupied(item).some(p => index(level, p.x, p.y) === start.cell)) : undefined
     const effective = object ? { ...selection, rotation: turn(object.rotation, directions.indexOf(selection.rotation)) } : selection
     const next = edit(level, board, target, effective, start)
-    setKeyboardStart(null)
+    setKeyboardAnchor(null)
     if (next !== board) commit(next)
   }
 
@@ -171,7 +181,7 @@ export default function Plan({ level, board, report, selection, layers, highligh
     viewBox={`${-1.58 + width * (1 - 1 / view.zoom) / 2 + view.x} ${-.65 + height * (1 - 1 / view.zoom) / 2 + view.y} ${width / view.zoom} ${height / view.zoom}`}
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerEnd}
     onPointerCancel={event => pointerEnd(event, true)} onLostPointerCapture={event => pointerEnd(event, true)}
-    onPointerLeave={() => setHover(null)} onKeyDown={onKeyDown}>
+    onPointerLeave={() => setHover(null)} onBlur={() => setKeyboardAnchor(null)} onKeyDown={onKeyDown}>
     <defs>
       <pattern id="paper-grid" width=".25" height=".25" patternUnits="userSpaceOnUse">
         <path d="M .25 0 H 0 V .25" className="micro-grid" />
@@ -221,11 +231,12 @@ export default function Plan({ level, board, report, selection, layers, highligh
       if (!structure && (boundary === 'wall' || boundary === 'bearing')) return null
       return <line key={edge} {...line(edge)} className={`edge edge-${boundary} ${highlightEdges.has(edge) ? 'edge-mark' : ''}`} />
     })}
-    {[...level.fixed, ...board.openings].map((opening, i) => <g key={`${opening.edge}-${i}`}>
-      {!['swing', 'sliding', 'window'].includes(report.boundaries.get(opening.edge) ?? '') &&
-        <line {...line(opening.edge)} className="edge-invalid" />}
-      <DoorSymbol opening={opening} />
-    </g>)}
+    {[...level.fixed, ...board.openings].map((opening, i) => {
+      const key = `${opening.edge}-${i}`
+      return invalidOpenings.has(`opening-${i}`)
+        ? <line key={key} {...line(opening.edge)} className="edge-invalid" />
+        : <DoorSymbol key={key} opening={opening} />
+    })}
     {[...board.furniture].sort((a, b) => Number(catalog[b.type]?.layer === 'floor') - Number(catalog[a.type]?.layer === 'floor'))
       .map(item => Object.hasOwn(catalog, item.type) && <FurnitureSymbol key={item.id} item={item} invalid={outline.has(item.id)} />)}
     {layers.includes('Wi-Fi') && board.furniture.filter(item => catalog[item.type]?.radius).map(item =>
@@ -244,10 +255,10 @@ export default function Plan({ level, board, report, selection, layers, highligh
       <text y="0">N</text><path d="M 0 .16 L -.12 .52 L 0 .46 L .12 .52 Z" />
     </g>
     {!readOnly && hover && (edgeTools.has(selection.tool) ?
-      <line {...line(hover.edge, .05)} className="edge-hover" /> : hover.cell >= 0 &&
+      canHighlight(hover.edge) && <line {...line(hover.edge, .05)} className="edge-hover" /> : hover.cell >= 0 &&
       <rect x={point(level.width, hover.cell).x + .06} y={point(level.width, hover.cell).y + .06} width=".88" height=".88" className="cell-hover" />)}
     {!readOnly && <g className="keyboard-cursor">
-      {edgeTools.has(selection.tool) ? <line {...line(keyboardHit(level, cursor, keyboardSide).edge, .05)} className="edge-hover" /> :
+      {edgeTools.has(selection.tool) ? canHighlight(cursorEdge) && <line {...line(cursorEdge, .05)} className="edge-hover" /> :
         <rect x={point(level.width, cursor).x + .06} y={point(level.width, cursor).y + .06} width=".88" height=".88" className="cell-hover" />}
       {keyboardStart && <rect x={point(level.width, keyboardStart.cell).x + .1} y={point(level.width, keyboardStart.cell).y + .1} width=".8" height=".8" className="cell-mark" />}
     </g>}
