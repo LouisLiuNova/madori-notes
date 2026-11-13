@@ -97,9 +97,16 @@ export function validate(level: Level, board: Board): Report {
     const fixed = i < level.fixed.length
     const [a, b] = sides(level, edge)
     const validPocket = !pocket || (!openingEdges.has(pocket) && !occupiedEdges.has(pocket))
-    if ((!fixed && !level.openingTypes.includes(kind)) || !fitsOpening(opening, key => boundaries.get(key)) ||
-        !validPocket || occupiedEdges.has(edge)) {
-      global.push(result(`opening-${i}`, 'conflict', '门窗须放在允许的墙段上，且洞口与收纳墙不能重叠。',
+    const name = { window: '外窗', swing: '推门', sliding: '拉门' }[kind]
+    const problem = !fixed && !level.openingTypes.includes(kind) ? '本关不支持这种开口，请移除。'
+      : !validPocket || occupiedEdges.has(edge) ? '与另一处洞口或收纳墙重叠，请移除后换一段墙。'
+      : !fitsOpening(opening, key => boundaries.get(key)) ? {
+        window: '需要外墙，请换到外轮廓。',
+        swing: '需要普通隔墙或外墙，请恢复墙段或移动推门。',
+        sliding: '需要两段连续的普通隔墙，请恢复墙段或调整收纳方向。',
+      }[kind] : undefined
+    if (problem) {
+      global.push(result(`opening-${i}`, 'conflict', `${name}：${problem}`,
         [a, b].filter(cell => cell >= 0), pocket ? [edge, pocket] : [edge]))
       continue
     }
@@ -129,11 +136,18 @@ export function validate(level: Level, board: Board): Report {
     const def = catalog[object.type]
     const cells = occupied(object).map(p => index(level, p.x, p.y))
     const room = roomOf.get(cells[0])
-    if (!def || !level.furnitureTypes.includes(object.type) || objectIds.has(object.id) ||
-        !room || !def.rooms.includes(room.type) || cells.some(cell => roomOf.get(cell) !== room ||
-          (def.layer === 'solid' ? solid.has(cell) : floor.has(cell))) ||
-        cells.some(cell => adjacent(cell).some(next => cells.includes(next.cell) && bearing.has(next.edge)))) {
-      global.push(result(`furniture-${object.id}`, 'conflict', '家具越界、跨墙、重叠或不适用于该区域。',
+    const reason = !def || !level.furnitureTypes.includes(object.type) ? '本关不适用，请移除。'
+      : objectIds.has(object.id) ? '标识重复，请移除重复物件后重新放置。'
+      : cells.some(cell => cell < 0) ? '超出可用格，请移回图纸内。'
+      : !room ? '位于未划分区域，请先划分房间或移入房间。'
+      : !def.rooms.includes(room.type) ? '不适用于该房间，请移入适用房间。'
+      : cells.some(cell => roomOf.get(cell) !== room) ||
+        cells.some(cell => adjacent(cell).some(next => cells.includes(next.cell) && bearing.has(next.edge)))
+        ? '跨越房间边界或承重墙，请移到同一房间内。'
+      : cells.some(cell => def.layer === 'solid' ? solid.has(cell) : floor.has(cell))
+        ? '与同层家具重叠，请移动其中一件。' : undefined
+    if (reason) {
+      global.push(result(`furniture-${object.id}`, 'conflict', `${def?.name ?? '未知家具'}：${reason}`,
         cells.filter(cell => cell >= 0), [], [object.id]))
       continue
     }
@@ -158,9 +172,11 @@ export function validate(level: Level, board: Board): Report {
     const a = sides(level, opening.edge)
     const swing = sweep.get(opening.edge)
     if (a.some(cell => solid.has(cell))) {
+      const blockers = board.furniture.filter(item => a.some(cell => solid.get(cell) === item.id))
+      const names = [...new Set(blockers.map(item => catalog[item.type].name))].join('、')
       global.push(result(`landing-${opening.edge}`, 'conflict',
-        swing !== undefined && solid.has(swing) ? '家具侵入推门开启净空。' : '门洞落脚格被家具挡住。',
-        a.filter(cell => cell >= 0), [opening.edge]))
+        swing !== undefined && solid.has(swing) ? `${names}侵入推门开启净空，请移开家具。` : `${names}挡住门洞落脚格，请移开家具。`,
+        a.filter(cell => cell >= 0), [opening.edge], blockers.map(item => item.id)))
     }
   }
 

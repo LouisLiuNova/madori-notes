@@ -1,24 +1,25 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpFromLine, BookOpen, CalendarDays, Check, ChevronDown,
-  ChevronRight, CircleHelp, CircleX, Compass, DoorOpen, Eraser, FlipHorizontal2, Focus, Grid2X2, Layers3,
+  ChevronRight, CircleHelp, CircleX, Compass, DoorOpen, Eraser, FlipHorizontal2, Focus, Grid2X2, Hand, Layers3,
   Lightbulb, LockKeyhole, Minus, MousePointer2, PanelsTopLeft, Plus, Redo2, RotateCw, SquareDashed,
   Sun, Trash2, Undo2, Wifi, X,
 } from 'lucide-react'
 import { chapters, teaching } from '../../content/levels.ts'
 import { legacyTeaching } from '../../content/legacy-levels.ts'
-import { catalog } from '../../packages/domain/catalog.ts'
-import { turn } from '../../packages/domain/geometry.ts'
+import { catalog, occupied } from '../../packages/domain/catalog.ts'
+import { index, point, segment, shiftEdge, turn } from '../../packages/domain/geometry.ts'
 import { rooms } from '../../packages/domain/model.ts'
-import type { Board, Level } from '../../packages/domain/model.ts'
+import type { Board, Edge, Level, Result } from '../../packages/domain/model.ts'
 import { validate } from '../../packages/domain/validate.ts'
 import { dateInSingapore, generateDaily, generatorVersions } from '../../packages/generator/daily.ts'
 import CloudPanel from '../components/CloudPanel.tsx'
 import { api, useCloud } from './cloud.ts'
 import Plan from '../components/Plan.tsx'
-import { centered, layers } from './planView.ts'
-import type { Layer } from './planView.ts'
+import { centered, clampView, layers } from './planView.ts'
+import type { Layer, View } from './planView.ts'
+import { rotateFurniture } from './editor.ts'
 import type { EraseScope, Selection, Tool } from './editor.ts'
 import { mergeSaves, readArchive, readSaves, writeSaves } from './storage.ts'
 import type { Save, Saves } from './storage.ts'
@@ -59,27 +60,69 @@ function setPreference(key: string, value: string) {
   try { localStorage.setItem(key, value) } catch { /* 偏好不可持久化时仍可游玩。 */ }
 }
 
-function Modal({ title, close, children, descriptionId, initialFocus }: {
-  title: string; close: () => void; children: ReactNode; descriptionId?: string; initialFocus?: RefObject<HTMLElement | null>
+function Modal({ open, title, close, children, descriptionId, initialFocus }: {
+  open: boolean; title: string; close: () => void; children: ReactNode
+  descriptionId?: string; initialFocus?: RefObject<HTMLElement | null>
 }) {
   const ref = useRef<HTMLDialogElement>(null)
+  const [shown, setShown] = useState(open)
+  if (open && !shown) setShown(true)
+
   useLayoutEffect(() => {
     const dialog = ref.current
+    if (!open || !dialog) return
     const previous = document.activeElement
-    dialog?.showModal()
+    dialog.showModal()
     initialFocus?.current?.focus({ preventScroll: true })
     return () => {
-      dialog?.close()
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true })
+      dialog.close()
+      if (previous instanceof HTMLElement && previous.isConnected && document.activeElement === document.body) {
+        previous.focus({ preventScroll: true })
+      }
     }
-  }, [initialFocus])
-  return <dialog ref={ref} className="modal" aria-label={title} aria-describedby={descriptionId} onCancel={event => { event.preventDefault(); close() }}
+  }, [open, initialFocus])
+
+  useEffect(() => {
+    if (open || !shown) return
+    const timer = window.setTimeout(() => setShown(false), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200)
+    return () => window.clearTimeout(timer)
+  }, [open, shown])
+
+  if (!shown) return null
+  return <dialog ref={ref} className="modal" aria-label={title} aria-describedby={descriptionId}
+    onCancel={event => { event.preventDefault(); close() }}
     onClick={event => { if (event.target === event.currentTarget) close() }}>
     <div className="modal-content">
       <header><h2>{title}</h2><button className="icon-btn" aria-label="关闭" onClick={close}><X size={19} /></button></header>
       {children}
     </div>
   </dialog>
+}
+
+function changedArea(level: Level, before: Board, after: Board): Pick<Result, 'cells' | 'edges'> {
+  const cells = new Set<number>()
+  const edges = new Set<Edge>()
+  before.roomTypes.forEach((type, cell) => { if (type !== after.roomTypes[cell]) cells.add(cell) })
+  for (const [source, target] of [[before, after], [after, before]]) {
+    const furniture = new Map(target.furniture.map(item => [item.id, item]))
+    for (const item of source.furniture) {
+      const other = furniture.get(item.id)
+      if (other && item.x === other.x && item.y === other.y && item.rotation === other.rotation && item.type === other.type) continue
+      for (const { x, y } of occupied(item)) {
+        const cell = index(level, x, y)
+        if (cell >= 0) cells.add(cell)
+      }
+    }
+    const openings = new Map(target.openings.map(item => [item.edge, item]))
+    for (const item of source.openings) {
+      if (JSON.stringify(item) === JSON.stringify(openings.get(item.edge))) continue
+      edges.add(item.edge)
+      if (item.kind === 'sliding') edges.add(shiftEdge(item.edge, item.pocket))
+    }
+    const openEdges = new Set(target.openEdges)
+    for (const edge of source.openEdges) if (!openEdges.has(edge)) edges.add(edge)
+  }
+  return { cells: [...cells], edges: [...edges] }
 }
 
 function Workspace({ session, save, onSave, openChapters, next, closeLevel, status, levelTitle }: {
@@ -92,7 +135,13 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const [draft, setDraft] = useState<Board | null>(null)
   const [selection, select] = useState<Selection>({ tool: 'rect', room: level.roomTypes[0], furniture: level.furnitureTypes[0] ?? '',
     rotation: 'N', side: 0, mirror: false, eraseScope: 'rooms' })
-  const [view, setView] = useState(centered)
+  const [view, renderView] = useState(centered)
+  const viewFrame = useRef(0)
+  const currentView = useRef(centered)
+  const targetView = useRef(centered)
+  const [panMode, setPanMode] = useState(false)
+  const [showPalette, setShowPalette] = useState(false)
+  const [showBrief, setShowBrief] = useState(false)
   const [visibleLayers, setLayers] = useState<Layer[]>(['分区', '结构'])
   const [selectedRule, setRule] = useState('')
   const [modal, setModal] = useState<ModalName | null>(null)
@@ -102,6 +151,9 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const [hintMessage, setHintMessage] = useState('')
   const [reference, setReference] = useState<Board | null>(null)
   const [message, setMessage] = useState('')
+  const [editFeedback, setEditFeedback] = useState({ message: '', revision: 0 })
+  const [selectedObjectId, selectObject] = useState('')
+  const [confirmation, setConfirmation] = useState<{ board: Board; from: Board; revision: number }>()
   const hintRequest = useRef(0)
   const resetCancel = useRef<HTMLButtonElement>(null)
   const undoButton = useRef<HTMLButtonElement>(null)
@@ -109,20 +161,74 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const sheetTitle = useRef<HTMLElement>(null)
   const returnToEdit = useRef<HTMLButtonElement>(null)
   const board = history.boards[history.position]
+  const selectedObject = board.furniture.find(item => item.id === selectedObjectId)
+  const furniture = catalog[selection.furniture]
+  const canRotate = selection.tool === 'furniture' || selection.tool === 'swing' || (selection.tool === 'move' && Boolean(selectedObject))
+  const canMirror = selection.tool === 'swing' || selection.tool === 'sliding'
   const atInitial = board === level.initial || JSON.stringify(board) === JSON.stringify(level.initial)
   const visibleBoard = reference ?? draft ?? board
-  const report = useReport(level, visibleBoard)
-  const results = [...report.level, ...report.global]
+  const { committed, visible: report } = useReport(level, reference ?? board, reference ? null : draft)
+  const results = [...committed.level, ...committed.global]
   const highlight = results.find(rule => rule.id === selectedRule)
-  const satisfied = report.level.filter(rule => rule.status === 'satisfied').length
-  const problems = report.global.filter(rule => rule.status !== 'satisfied')
+  const satisfied = committed.level.filter(rule => rule.status === 'satisfied').length
+  const problems = committed.global.filter(rule => rule.status !== 'satisfied')
   const chapter = session.legacy ? '旧版教学' : number ? chapters[Math.floor((number - 1) / 6)] : '每日挑战'
   const readOnly = Boolean(reference)
+  const recent = !readOnly && !draft && confirmation?.board === board ? confirmation : undefined
+  const recentFeedback = useMemo(() => {
+    if (!recent) return undefined
+    const previous = validate(level, recent.from)
+    const prior = new Set(previous.level.filter(item => item.status === 'satisfied').map(item => item.id))
+    return { ...changedArea(level, recent.from, recent.board), revision: recent.revision,
+      satisfied: new Set(committed.level.filter(item => item.status === 'satisfied' && !prior.has(item.id)).map(item => item.id)),
+      ready: committed.complete && !previous.complete }
+  }, [level, recent, committed])
+
+  useEffect(() => {
+    if (!confirmation) return
+    const timer = window.setTimeout(() => setConfirmation(undefined), 650)
+    return () => window.clearTimeout(timer)
+  }, [confirmation])
 
   useLayoutEffect(() => {
     if (reference) returnToEdit.current?.focus()
   }, [reference])
-  useLayoutEffect(() => () => { hintRequest.current++ }, [])
+  useLayoutEffect(() => () => { hintRequest.current++; cancelAnimationFrame(viewFrame.current) }, [])
+
+  function stopView() {
+    cancelAnimationFrame(viewFrame.current)
+    targetView.current = currentView.current
+  }
+
+  function setView(next: View) {
+    stopView()
+    targetView.current = next
+    currentView.current = next
+    renderView(next)
+  }
+
+  function animateView(request: View) {
+    const to = clampView(request, level.width + 3.15, level.height + 2.47)
+    stopView()
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { setView(to); return }
+    targetView.current = to
+    const from = currentView.current
+    const started = performance.now()
+    function frame(now: number) {
+      const progress = 1 - (1 - Math.min(1, (now - started) / 180)) ** 3
+      const next = { zoom: from.zoom + (to.zoom - from.zoom) * progress,
+        x: from.x + (to.x - from.x) * progress, y: from.y + (to.y - from.y) * progress }
+      currentView.current = next
+      renderView(next)
+      if (progress < 1) viewFrame.current = requestAnimationFrame(frame)
+    }
+    viewFrame.current = requestAnimationFrame(frame)
+  }
+
+  function zoomBy(change: number) {
+    const previous = targetView.current
+    animateView({ ...previous, zoom: Math.max(1, Math.min(3, previous.zoom + change)) })
+  }
 
   const persist = (next: Board, hintCount = hints, completed = save?.completed) =>
     onSave(level.id, { board: next, hints: hintCount, completed })
@@ -130,7 +236,12 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     if (nextBoard === board) return
     const boards = [...history.boards.slice(0, history.position + 1), nextBoard].slice(-100)
     setHistory({ boards, position: boards.length - 1 })
+    setConfirmation(current => ({ board: nextBoard, from: board, revision: (current?.revision ?? 0) + 1 }))
     setMessage('')
+    const changedObjects = new Set(nextBoard.furniture.filter(item => !board.furniture.includes(item)).map(item => item.id))
+    const conflict = changedObjects.size && validate(level, nextBoard).global.find(rule =>
+      rule.status === 'conflict' && rule.objects.some(id => changedObjects.has(id)))
+    announceEdit(conflict ? conflict.message : '')
     persist(nextBoard)
   }
 
@@ -138,7 +249,9 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     const position = history.position + change
     if (!history.boards[position]) return
     setHistory({ ...history, position })
+    setConfirmation(current => ({ board: history.boards[position], from: board, revision: (current?.revision ?? 0) + 1 }))
     setMessage('')
+    setEditFeedback(current => ({ ...current, message: '' }))
     persist(history.boards[position])
   }
 
@@ -149,17 +262,37 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     requestAnimationFrame(() => undoButton.current?.focus({ preventScroll: true }))
   }
 
+  function announceEdit(message: string) {
+    setEditFeedback(current => ({ message, revision: current.revision + 1 }))
+  }
+
   function chooseTool(tool: Tool) {
-    select({ ...selection, tool, rotation: tool === 'move' ? 'N' : selection.rotation })
+    setPanMode(false)
+    if (selection.tool === tool) return
+    announceEdit('')
+    select({ ...selection, tool, rotation: 'N', side: 0, mirror: false, targetOffset: 0 })
+    selectObject('')
   }
 
   function rotate() {
-    select({ ...selection, rotation: turn(selection.rotation, 1), side: selection.side === 0 ? 1 : 0 })
+    if (readOnly || draft || !canRotate) return
+    if (selection.tool === 'move' && selectedObject) commit(rotateFurniture(board, selectedObject))
+    else if (selection.tool === 'swing') select({ ...selection, side: selection.side === 0 ? 1 : 0 })
+    else select({ ...selection, rotation: turn(selection.rotation, 1) })
+  }
+
+  function mirror() {
+    if (canMirror && !draft && !readOnly) select({ ...selection, mirror: !selection.mirror })
+  }
+
+  function cycleTarget() {
+    select({ ...selection, targetOffset: (selection.targetOffset ?? 0) + 1 })
+    selectObject('')
   }
 
   useEffect(() => {
     const shortcut = (event: globalThis.KeyboardEvent) => {
-      if (modal || reference || document.querySelector('dialog[open]') || (event.target instanceof HTMLElement &&
+      if (modal || reference || draft || document.querySelector('dialog[open]') || (event.target instanceof HTMLElement &&
           (event.target.matches('input, select, textarea') || event.target.isContentEditable))) return
       const key = event.key.toLowerCase()
       if ((event.ctrlKey || event.metaKey) && (key === 'z' || key === 'y')) {
@@ -169,7 +302,8 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         if (key === 'm') chooseTool('rect')
         if (key === 'e') chooseTool('eraseRect')
         if (key === 'r') rotate()
-        if (key === 'f') select({ ...selection, mirror: !selection.mirror })
+        if (key === 'f') mirror()
+        if (key === 'q' && (selection.tool === 'move' || selection.tool === 'remove')) cycleTarget()
       }
     }
     window.addEventListener('keydown', shortcut)
@@ -178,7 +312,16 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
 
   function pointToRule(rule: (typeof results)[number]) {
     setRule(rule.id)
-    if (rule.cells.length || rule.edges.length) drawing.current?.scrollIntoView({ block: 'nearest' })
+    if (rule.status !== 'satisfied') announceEdit(rule.message)
+    const cell = rule.cells[0]
+    const edge = rule.edges[0]
+    const object = board.furniture.find(item => rule.objects.includes(item.id))
+    const location = cell !== undefined ? point(level.width, cell) : edge ? segment(edge) : object
+    if (location) {
+      if (view.zoom > 1) animateView({ ...view, x: location.x + .5 - (-1.58 + (level.width + 3.15) / 2),
+        y: location.y + .5 - (-.65 + (level.height + 2.47) / 2) })
+      drawing.current?.scrollIntoView({ block: 'nearest' })
+    }
   }
 
   function closeHint() {
@@ -197,6 +340,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
       try {
         const solution = await session.reference()
         if (hintRequest.current !== request) return
+        setConfirmation(undefined)
         setReference(solution)
         setRule('')
         closeHint()
@@ -227,16 +371,22 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
 
   function submit() {
     if (reference || draft) return
-    const final = validate(level, board)
+    const final = committed
     if (!final.complete) {
       setMessage('图纸还有未满足的条件，请检查委托和全局规则。')
       const unresolved = [...final.level, ...final.global].filter(rule => rule.status !== 'satisfied')
-      setRule((unresolved.find(rule => rule.cells.length || rule.edges.length) ?? unresolved[0])?.id ?? '')
+      const problem = unresolved.find(rule => rule.cells.length || rule.edges.length || rule.objects.length) ?? unresolved[0]
+      if (problem) pointToRule(problem)
       return
     }
     persist(board, hints, save?.completed ?? { at: new Date().toISOString(), hints })
     setModal('result')
   }
+
+  const turned = selection.rotation === 'E' || selection.rotation === 'W'
+  const usageLabels = { front: '单侧', sides: '两侧', around: '四周', none: '无需使用格' }
+  const furnitureDetails = selection.tool === 'furniture' && furniture &&
+    `${furniture.name} · ${turned ? furniture.height : furniture.width}×${turned ? furniture.width : furniture.height} · ${{ N: '初始', E: '顺转 90°', S: '顺转 180°', W: '顺转 270°' }[selection.rotation]} · 使用侧：${usageLabels[furniture.usage]} · 适用：${furniture.rooms.map(room => rooms[room]).join('、')}`
 
   const layerOptions = <div className="layer-options">
     {layers.map(layer => <label key={layer}><input type="checkbox" checked={visibleLayers.includes(layer)}
@@ -249,7 +399,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     <div className="room-options">
       {level.roomTypes.map(type => <button className="room-option" key={type} disabled={readOnly}
         aria-pressed={selection.room === type && selection.tool === 'rect'}
-        onClick={() => select({ ...selection, room: type, tool: 'rect' })}>
+        onClick={() => { setPanMode(false); select({ ...selection, room: type, tool: 'rect' }) }}>
         <span className={`swatch room-${type}`} />{rooms[type]}
         {selection.room === type && selection.tool === 'rect' && <Check className="choice-check" size={15} />}
       </button>)}
@@ -268,23 +418,33 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
           const def = catalog[type]
           return <button className="room-option object-option" key={type} disabled={readOnly} aria-pressed={selection.tool === 'furniture' && selection.furniture === type}
             title={`${def.rooms.map(room => rooms[room]).join('、')} · ${def.high ? '遮挡视线' : '视线可穿过'} · ${def.layer === 'floor' ? '可叠放' : '占据通道'} · ${def.usage === 'none' ? '装饰' : '需要使用格'}${def.radius ? ` · 半径 ${def.radius} 格` : ''}`}
-            onClick={() => select({ ...selection, tool: 'furniture', furniture: type })}>
+            onClick={() => chooseFurniture(type)}>
             <span>{def.name}</span><small>{def.width}×{def.height}</small>
           </button>
         })}
       </div>
     </section>}
-    {(level.furnitureTypes.length > 0 || level.openingTypes.length > 0) && <div className="tool-options object-tools">
-      {level.furnitureTypes.length > 0 && <button disabled={readOnly} aria-pressed={selection.tool === 'move'} onClick={() => chooseTool('move')}><MousePointer2 size={16} />移动</button>}
-      <button disabled={readOnly} aria-pressed={selection.tool === 'remove'} onClick={() => chooseTool('remove')}><Trash2 size={16} />移除</button>
-      <button disabled={readOnly} onClick={rotate}><RotateCw size={16} />旋转</button>
-      <button disabled={readOnly} onClick={() => select({ ...selection, mirror: !selection.mirror })} aria-pressed={selection.mirror}><FlipHorizontal2 size={16} />镜像</button>
-    </div>}
     <div className="layer-section palette-group">
       <div className="palette-heading"><Layers3 size={15} /> 辅助图层</div>
       {layerOptions}
     </div>
   </>
+
+  function chooseFurniture(type: string) {
+    setPanMode(false)
+    announceEdit('')
+    select({ ...selection, tool: 'furniture', furniture: type, rotation: selection.tool === 'furniture' ? selection.rotation : 'N' })
+  }
+
+  const objectControls = (level.furnitureTypes.length > 0 || level.openingTypes.length > 0) && <div className="tool-options object-tools">
+      {level.furnitureTypes.length > 0 && <button disabled={readOnly} aria-pressed={selection.tool === 'move'} onClick={() => chooseTool('move')}><MousePointer2 size={16} />移动</button>}
+      <button disabled={readOnly} aria-pressed={selection.tool === 'remove'} onClick={() => chooseTool('remove')}><Trash2 size={16} />移除</button>
+      {canRotate && <button disabled={readOnly} onClick={rotate}><RotateCw size={16} />
+        {selection.tool === 'move' ? '旋转选中家具' : selection.tool === 'swing' ? '翻转开启侧' : '旋转预览'}</button>}
+      {canMirror && <button disabled={readOnly} onClick={mirror} aria-pressed={selection.mirror}><FlipHorizontal2 size={16} />镜像</button>}
+      {(selection.tool === 'move' || selection.tool === 'remove') &&
+        <button disabled={readOnly} onClick={cycleTarget} title="Q">切换重叠目标</button>}
+    </div>
 
   return <>
     <div className="workspace page-width">
@@ -298,14 +458,21 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
       </div>
 
       <main className="studio">
-        <aside className="panel brief-panel" aria-label="委托条件">
-          <h2>委托清单</h2>
-          <div className="progress-summary"><span>条件</span><strong>{satisfied}<span> / {report.level.length}</span></strong></div>
-          <progress aria-label="已满足条件" max={report.level.length} value={satisfied} />
+        <aside id="commission-brief" className="panel brief-panel" data-expanded={showBrief} aria-label="委托条件">
+          <div className="brief-heading"><h2>委托清单</h2>
+            <button className="plain mobile-brief-return" onClick={() => {
+              setShowBrief(false)
+              drawing.current?.scrollIntoView({ block: 'nearest' })
+              drawing.current?.querySelector('svg')?.focus({ preventScroll: true })
+            }}>返回图纸</button>
+          </div>
+          <div className="progress-summary"><span>条件</span><strong>{satisfied}<span> / {committed.level.length}</span></strong></div>
+          <progress aria-label="已满足条件" max={committed.level.length} value={satisfied} />
           <div className="conditions">
-            {report.level.map((rule, i) => <button className="condition" key={rule.id}
+            {committed.level.map((rule, i) => <button className="condition" key={rule.id}
               aria-pressed={rule.id === selectedRule} onClick={() => rule.id === selectedRule ? setRule('') : pointToRule(rule)}>
-              <span className={`status-icon ${rule.status}`}>{rule.status === 'satisfied' ? <Check size={14} /> :
+              <span className={`status-icon ${rule.status}${recentFeedback?.satisfied.has(rule.id) ? ' just-satisfied' : ''}`}
+                key={recentFeedback?.satisfied.has(rule.id) ? recentFeedback.revision : 'status'}>{rule.status === 'satisfied' ? <Check size={14} /> :
                 rule.status === 'conflict' ? <X size={14} /> : <span className="status-dot" />}</span>
               <span><strong>{level.constraints[i].label}</strong><small>{rule.message}</small></span>
             </button>)}
@@ -329,22 +496,54 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
                 sheetTitle.current?.focus({ preventScroll: true })
               }}><ArrowLeft size={15} />返回编辑</button>}
               <button className="icon-btn" aria-label="缩小" title="缩小" disabled={view.zoom <= 1}
-                onClick={() => setView({ ...view, zoom: Math.max(1, view.zoom - .25) })}><Minus size={16} /></button>
+                onClick={() => zoomBy(-.25)}><Minus size={16} /></button>
               <span className="zoom">{Math.round(view.zoom * 100)}%</span>
               <button className="icon-btn" aria-label="放大" title="放大" disabled={view.zoom >= 3}
-                onClick={() => setView({ ...view, zoom: Math.min(3, view.zoom + .25) })}><Plus size={16} /></button>
-              <button className="icon-btn center-button" aria-label="居中" title="居中" onClick={() => setView(centered)}><Focus size={17} /></button>
+                onClick={() => zoomBy(.25)}><Plus size={16} /></button>
+              <button className="icon-btn center-button" aria-label="居中" title="居中" onClick={() => animateView(centered)}><Focus size={17} /></button>
             </div>
           </div>
-          <div className="drawing" ref={drawing}>
-            <Plan level={level} board={visibleBoard} report={report} selection={selection} layers={visibleLayers}
-              highlight={highlight} view={view} setView={setView} commit={commit} preview={setDraft} readOnly={Boolean(reference)} />
+          <div className="sheet-utilities">
+            {!readOnly && <button className="plain" aria-pressed={panMode}
+              onClick={() => setPanMode(current => !current)} title="图纸获得焦点后也可按住空格拖动"><Hand size={16} />平移</button>}
+            <button className="plain mobile-palette-toggle" aria-controls="drawing-palette" aria-expanded={showPalette}
+              onClick={() => {
+                setShowPalette(!showPalette)
+                if (!showPalette) requestAnimationFrame(() => document.getElementById('drawing-palette')?.scrollIntoView({ block: 'nearest' }))
+              }}>绘图工具 <ChevronDown size={14} /></button>
           </div>
+          <div className="drawing" ref={drawing}>
+            <div className="drawing-content" key={reference ? 'reference' : 'editor'}>
+              <Plan level={level} board={visibleBoard} report={report} selection={selection} layers={visibleLayers}
+              changes={recentFeedback} highlight={highlight} view={view} setView={setView} commit={commit} preview={nextDraft => { if (nextDraft) setConfirmation(undefined); setDraft(nextDraft) }} readOnly={Boolean(reference)}
+              panMode={panMode} stopView={stopView} selectedObject={readOnly ? '' : selectedObjectId} selectObject={selectObject}
+              feedback={announceEdit} />
+            </div>
+          </div>
+          {!readOnly && <div className="edit-feedback">
+            {furnitureDetails && <span>{furnitureDetails}</span>}
+            {selection.tool === 'move' && <span>{selectedObject ? `已选中 ${catalog[selectedObject.type]?.name}` : '点选家具后可原地旋转，拖动可移动。'}</span>}
+            {!editFeedback.message && selection.tool === 'furniture' && committed.global.some(item => item.status === 'conflict' && item.objects.length) &&
+              <button className="edit-issue" onClick={() => {
+                const problem = committed.global.findLast(item => item.status === 'conflict' && item.objects.length)
+                if (problem) pointToRule(problem)
+              }}>定位家具冲突</button>}
+            <span className="edit-message" role="status">{editFeedback.message && <span key={editFeedback.revision}>{editFeedback.message}</span>}</span>
+          </div>}
           <div className="sheet-legend">
             <span><i className="legend-line" />固定外墙</span><span><i className="legend-empty" />未分配</span>
             <span><i className="legend-entry" />主入口</span>
             {visibleLayers.includes('结构') && <span>图示尺寸 mm</span>}
             {visibleLayers.includes('Wi-Fi') && <span><Wifi size={14} />Wi-Fi 覆盖</span>}
+          </div>
+          <div className="quick-objects">
+            {level.furnitureTypes.length > 0 && <select className="mobile-furniture" aria-label="选择家具"
+              disabled={readOnly} value={selection.tool === 'furniture' ? selection.furniture : ''}
+              onChange={event => chooseFurniture(event.target.value)}>
+              <option value="" disabled>选择家具</option>
+              {level.furnitureTypes.map(type => <option key={type} value={type}>{catalog[type].name}</option>)}
+            </select>}
+            {objectControls}
           </div>
           <div className="toolbar">
             <div className="toolbar-group">
@@ -370,28 +569,38 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
             </div>
             <button className="mobile-layers plain" aria-haspopup="dialog" onClick={() => setModal('layers')}><Layers3 size={17} />图层</button>
           </div>
+          <span className="sr-only" role="status">{recentFeedback?.ready ? '所有条件已满足，可以提交图纸。' : ''}</span>
+          <div className="mobile-progress">
+            <button className="plain" aria-controls="commission-brief" aria-expanded={showBrief} onClick={() => {
+              setShowBrief(!showBrief)
+              if (!showBrief) requestAnimationFrame(() => document.getElementById('commission-brief')?.scrollIntoView({ block: 'nearest' }))
+            }}>条件 {satisfied}/{committed.level.length}{problems.length > 0 ? ` · ${problems.length} 项图纸问题` : committed.complete && !readOnly ? ' · 可以提交' : ''}</button>
+            <button className="primary" onClick={submit} disabled={readOnly || Boolean(draft)} data-ready={committed.complete && !readOnly}>
+              提交图纸 <ArrowRight size={16} /></button>
+          </div>
         </section>
 
-        <aside className="palette-panel" aria-label="绘图工具">{palette}</aside>
+        <aside id="drawing-palette" className="palette-panel" data-expanded={showPalette} aria-label="绘图工具">{palette}</aside>
       </main>
 
       <div className="finish-bar">
         <div className="finish-status" role="status" data-incomplete={Boolean(message)}><span className="save-dot" />{message || status}</div>
-        <span id="board-keys" hidden>方向键移动 · Shift + 方向键选边 · Enter 编辑</span>
-        <button className="primary" onClick={submit} disabled={Boolean(reference)} data-ready={report.complete}>提交图纸 <ArrowRight size={17} /></button>
+        {committed.complete && !readOnly && <span className="ready-note">所有条件已满足，可以提交图纸。</span>}
+        <span id="board-keys" hidden>方向键移动 · Shift + 方向键选边 · Enter 编辑 · 空格拖动平移</span>
+        <button className="primary" onClick={submit} disabled={readOnly || Boolean(draft)} data-ready={committed.complete && !readOnly}>提交图纸 <ArrowRight size={17} /></button>
       </div>
     </div>
-    {modal === 'reset' && <Modal title="重置图纸？" close={() => setModal(null)} descriptionId="reset-description" initialFocus={resetCancel}>
+    <Modal open={modal === 'reset'} title="重置图纸？" close={() => setModal(null)} descriptionId="reset-description" initialFocus={resetCancel}>
       <p id="reset-description">恢复本关的起始图纸。重置后可用「撤销」恢复当前草稿。</p>
       <div className="modal-actions">
         <button ref={resetCancel} className="plain" onClick={() => setModal(null)}>取消</button>
         <button className="primary" onClick={resetBoard}>确认重置</button>
       </div>
-    </Modal>}
-    {modal === 'layers' && <Modal title="辅助图层" close={() => setModal(null)}>{layerOptions}
+    </Modal>
+    <Modal open={modal === 'layers'} title="辅助图层" close={() => setModal(null)}>{layerOptions}
       <div className="modal-actions"><button className="primary" onClick={() => setModal(null)}>返回图纸<ArrowRight size={16} /></button></div>
-    </Modal>}
-    {modal === 'rules' && <Modal title="规则说明" close={() => setModal(null)}>
+    </Modal>
+    <Modal open={modal === 'rules'} title="规则说明" close={() => setModal(null)}>
       <ul className="rule-list">
         <li>涂绘所有可用格。同类四向连成一间房；承重墙完全截断时才分房。</li>
         <li>面积和数量都是下限。房间须有门或开放边界，并有至少一格可到达主入口。</li>
@@ -400,10 +609,12 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         <li>Wi-Fi 半径以格中心计算，跨墙覆盖取并集。</li>
         <li>图示以 1 格对应 1000 mm 标注定位轴线和轮廓尺寸。委托条件仍以格数计算。</li>
         <li>矩形 M，矩形擦除 E，旋转 R，镜像 F。点按编辑单格，拖动选定矩形。键盘用方向键选格，Shift + 方向键选边，Enter 应用工具。矩形工具用 Enter 分别选定两个角。</li>
+        <li>使用「平移」或让图纸获得焦点后按住空格拖动。触屏可双指缩放和平移，参考图支持同样的浏览操作。</li>
+        <li>触屏摆放家具或门窗时，先点选落点预览，可调整朝向，再次点按落点即可放置。移动工具点选家具后可原地旋转，按 Q 或使用「切换重叠目标」可选中底层物件。</li>
         <li>选择「擦除全部」会清除选区内的房间、家具、玩家门窗和墙体改动，固定结构保留。</li>
       </ul>
-    </Modal>}
-    {modal === 'hint' && <Modal title="委托提示" close={closeHint}>
+    </Modal>
+    <Modal open={modal === 'hint'} title="委托提示" close={closeHint}>
       {hintStep > 0 && <p>{level.tip}</p>}
       <div className="modal-actions">
         <button className="plain" disabled={hintLoading} onClick={() => void reveal(1)}>解释线索</button>
@@ -412,14 +623,18 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
       </div>
       {hintLoading && <p className="sr-only" role="status">正在打开参考图…</p>}
       {hintMessage && <p role="status">{hintMessage}</p>}
-    </Modal>}
-    {modal === 'result' && <Modal title="委托已完成" close={() => setModal(null)}>
-      {hints > 0 && <p>本次用到第 {hints} 级提示。</p>}
+    </Modal>
+    <Modal open={modal === 'result'} title="委托已完成" close={() => setModal(null)}>
+      <div className="completion-summary">
+        <span className="completion-stamp" aria-hidden="true"><Check size={23} />验收通过</span>
+        <div><strong>{level.title}</strong><p>已满足全部 {committed.level.length} 项委托条件。</p>
+        {hints > 0 && <p>本次用到第 {hints} 级提示。</p>}</div>
+      </div>
       <div className="modal-actions">
         <button className="plain" onClick={() => { setModal(null); closeLevel() }}>返回关卡目录</button>
         {number && number < teaching.length && <button className="primary" onClick={next}>下一关 <ArrowRight size={17} /></button>}
       </div>
-    </Modal>}
+    </Modal>
   </>
 }
 
@@ -600,7 +815,7 @@ export default function App() {
       <button onClick={() => showDialog('about')}>关于</button>
     </footer>
 
-    {modal === 'chapters' && <Modal title="关卡目录" close={close}>
+    <Modal open={modal === 'chapters'} title="关卡目录" close={close}>
       <p>已完成 {completed} / {teaching.length} 关</p>
       <div className="chapters">
         {chapters.map((chapter, group) => <section key={chapter}><h3>{chapter}</h3>
@@ -617,14 +832,14 @@ export default function App() {
         <button className="plain" disabled={!ready || dailyLoading} onClick={() => void openDaily()}><CalendarDays size={17} />{dailyLoading ? '正在打开…' : '每日挑战'}</button>
       </div>
       {(dailyLoading || notice) && <p role="status" className={dailyLoading ? 'sr-only' : undefined}>{dailyLoading ? '正在打开每日挑战…' : notice}</p>}
-    </Modal>}
-    {modal === 'theme' && <Modal title="图纸主题" close={close}>
+    </Modal>
+    <Modal open={modal === 'theme'} title="图纸主题" close={close}>
       <div className="theme-list">{Object.entries(presets).map(([id, name]) => <button key={id} aria-pressed={theme === id}
         onClick={() => setTheme(id as Theme)}><span className={`theme-sample sample-${id}`} />{name}{theme === id && <Check size={16} />}</button>)}</div>
       <div className="mode-list" aria-label="亮暗模式">{(['system', 'light', 'dark'] as const).map(value => <button key={value}
         aria-pressed={mode === value} className="plain" onClick={() => setMode(value)}>{{ system: '跟随系统', light: '亮色', dark: '暗色' }[value]}</button>)}</div>
-    </Modal>}
-    {modal === 'storage' && <Modal title="本地存档" close={close}>
+    </Modal>
+    <Modal open={modal === 'storage'} title="本地存档" close={close}>
       <p>{status}。</p>
       <input type="file" accept=".json,application/json" ref={upload} hidden onChange={async event => {
         const file = event.target.files?.[0]
@@ -654,11 +869,11 @@ export default function App() {
       </div></details>}
       {(dailyLoading || notice) && <p role="status">{dailyLoading ? '正在打开每日挑战…' : notice}</p>}
       <CloudPanel cloud={cloud} />
-    </Modal>}
-    {modal === 'about' && <Modal title="关于间取手帖" close={close}>
+    </Modal>
+    <Modal open={modal === 'about'} title="关于间取手帖" close={close}>
       <p>间取手帖是一款建筑空间解谜游戏。在网格图纸上划分房间、设置门窗、摆放家具，满足委托对面积、采光和动线的要求。你可以从 24 个教学关卡入门，也可以直接尝试每日挑战。</p>
       <h3>声明</h3>
       <p>间取手帖由个人独立开发，玩法受<a className="about-link" href={original} target="_blank" rel="noreferrer">《图纸没问题》</a>启发，为非官方作品。</p>
-    </Modal>}
+    </Modal>
   </>
 }
