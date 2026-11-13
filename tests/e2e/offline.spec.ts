@@ -13,7 +13,7 @@ test('生产构建离线刷新后继续编辑缓存日题', async ({ page, conte
   if (!bounds) throw new Error('找不到日题中的未分配格。')
   const before = await page.locator('.cell-empty').count()
   await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
-  await expect(page.getByRole('status')).toContainText('已保存')
+  await expect(page.locator('.finish-status')).toContainText('已保存')
   await context.setOffline(true)
   await page.reload()
   await expect(page.getByRole('heading', { name: '每日建筑委托' })).toBeVisible()

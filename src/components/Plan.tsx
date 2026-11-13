@@ -23,6 +23,7 @@ interface Props {
   selectedObject: string; selectObject: (id: string) => void
   feedback: (message: string) => void
   panMode: boolean; stopView: () => void
+  changes?: Pick<Result, 'cells' | 'edges'> & { revision: number }
 }
 
 function line(edge: Edge, inset = 0) {
@@ -53,7 +54,7 @@ function DoorSymbol({ opening }: { opening: Opening }) {
   </g>
 }
 
-export default function Plan({ level, board, report, selection, layers, highlight, view, setView, preview, commit, readOnly, selectedObject, selectObject, feedback, panMode, stopView }: Props) {
+export default function Plan({ level, board, report, selection, layers, highlight, view, setView, preview, commit, readOnly, selectedObject, selectObject, feedback, panMode, stopView, changes }: Props) {
   const svg = useRef<SVGSVGElement>(null)
   const gesture = useRef<{ id: number; start: Hit; last: Hit; before: Board; next: Board; selection: Selection; touchPlacement: boolean } | null>(null)
   const touches = useRef(new Map<number, { x: number; y: number }>())
@@ -92,14 +93,14 @@ export default function Plan({ level, board, report, selection, layers, highligh
       problem: edgeProblem(level, board, target.edge, selection),
     }
     const item = { ...point(level.width, target.cell), id: 'placement-preview', type: selection.furniture, rotation: selection.rotation }
-    if (target.cell < 0) return null
+    if (target.cell < 0) return { edge: target.edge, problem: '请选择图纸内的可用格。' }
     // Use a fresh ID so imported drafts cannot be mistaken for the preview.
     item.id = crypto.randomUUID()
     const candidate = validate(level, { ...board, furniture: [...board.furniture, item] })
     const problem = candidate.global.find(result => result.status === 'conflict' && result.objects.includes(item.id))?.message
     return { item, problem }
   }, [board, level, placement, selection, target])
-  const [localProblem, setLocalProblem] = useState<{ hit: Hit; tool: Tool; message: string } | null>(null)
+  const [localProblem, setLocalProblem] = useState<{ hit: Hit; tool: Tool } | null>(null)
   const failed = !readOnly && localProblem?.tool === selection.tool ? localProblem : null
 
   function announceFailure(at: Hit, current: Selection, base: Board) {
@@ -108,7 +109,7 @@ export default function Plan({ level, board, report, selection, layers, highligh
       current.tool === 'move' ? '请选择要移动的家具，再拖到目标格。' :
       current.tool === 'furniture' && at.cell < 0 ? '请选择图纸内的可用格。' : undefined
     if (!message) return
-    setLocalProblem({ hit: at, tool: current.tool, message })
+    setLocalProblem({ hit: at, tool: current.tool })
     feedback(message)
   }
 
@@ -275,7 +276,16 @@ export default function Plan({ level, board, report, selection, layers, highligh
       }
       return
     }
-    if (event.key === 'Escape') { setKeyboardAnchor(null); setTouchAnchor(null); return }
+    if (event.key === 'Escape') {
+      gesture.current = null
+      setPlacing(false)
+      setHover(null)
+      setKeyboardActive(false)
+      setKeyboardAnchor(null)
+      setTouchAnchor(null)
+      preview(null)
+      return
+    }
     if (event.key !== 'Enter' || readOnly || panMode) return
     event.preventDefault()
     const target = keyboardHit(level, cursor, keyboardSide)
@@ -289,7 +299,7 @@ export default function Plan({ level, board, report, selection, layers, highligh
     setKeyboardAnchor(null)
     setLocalProblem(null)
     if (next !== board) commit(next)
-    else announceFailure(start, selection, board)
+    else if (selection.tool !== 'move' || !editTarget(level, board, start, selection)) announceFailure(start, selection, board)
   }
 
   return <svg ref={svg} role="application" tabIndex={0} aria-label="平面图编辑区" aria-describedby="board-keys"
@@ -376,6 +386,13 @@ export default function Plan({ level, board, report, selection, layers, highligh
     <g className="north-arrow" transform={`translate(${level.width + .75} .18)`}>
       <text y="0">N</text><path d="M 0 .16 L -.12 .52 L 0 .46 L .12 .52 Z" />
     </g>
+    {changes && <g key={changes.revision} className="edit-confirmation" aria-hidden="true">
+      {changes.cells.map(cell => {
+        const { x, y } = point(level.width, cell)
+        return <rect key={cell} x={x + .035} y={y + .035} width=".93" height=".93" />
+      })}
+      {changes.edges.map(edge => <line key={edge} {...line(edge, .08)} />)}
+    </g>}
     {target && !placement && target.cell >= 0 && <rect
       x={point(level.width, target.cell).x + .06} y={point(level.width, target.cell).y + .06}
       width=".88" height=".88" className="cell-hover" />}

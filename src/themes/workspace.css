@@ -567,3 +567,49 @@ progress::-webkit-progress-bar { background: var(--border); }
   .plan { height: clamp(165px, 37svh, 330px); aspect-ratio: auto; }
   .sheet-legend { min-height: 28px; }
 }
+
+.drawing-content { width: 100%; min-width: 0; }
+.edit-confirmation { pointer-events: none; opacity: .75; }
+.edit-confirmation rect, .edit-confirmation line { fill: none; stroke: var(--accent); stroke-width: .045; stroke-dasharray: .13 .09; }
+.completion-summary { display: flex; align-items: center; gap: 16px; margin-block: 12px; }
+.completion-summary p { margin-block: 4px; }
+.completion-stamp { display: grid; place-items: center; flex: 0 0 auto; gap: 3px; padding: 10px; border: 3px double currentColor; border-radius: 4px; color: var(--accent); font: 750 .83rem var(--display); }
+.ready-note { color: var(--green); font-size: .82rem; }
+button:not(:disabled):active { filter: brightness(.93); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .drawing-content { animation: reveal 180ms ease-out; }
+  .just-satisfied { animation: check-confirmation 240ms ease-out; }
+  .edit-confirmation { animation: area-confirmation 340ms ease-out both; }
+  .completion-stamp { animation: stamp-confirmation 380ms ease-out both; }
+  button:not(:disabled):active { scale: .98; }
+  .modal { transition: opacity 180ms ease, transform 180ms ease, display 180ms allow-discrete, overlay 180ms allow-discrete; }
+  .modal:not([open]) { opacity: 0; transform: translateY(4px); pointer-events: none; }
+  .modal::backdrop { transition: opacity 180ms ease, display 180ms allow-discrete, overlay 180ms allow-discrete; }
+  .modal:not([open])::backdrop { opacity: 0; pointer-events: none; }
+}
+@keyframes check-confirmation {
+  40% { scale: 1.14; }
+}
+@keyframes area-confirmation {
+  from { opacity: .85; }
+  to { opacity: 0; }
+}
+@keyframes stamp-confirmation {
+  from { opacity: 0; transform: translateY(-5px) scale(1.07); }
+  to { opacity: 1; transform: none; }
+}
+
+.brief-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.brief-heading .mobile-brief-return { display: none; }
+.edit-issue { min-height: 44px; justify-self: start; color: var(--accent); text-decoration: underline; }
+@media (max-width: 580px), (max-height: 500px) and (max-width: 950px) {
+  .brief-heading .mobile-brief-return { display: inline-flex; }
+  .finish-bar .ready-note { display: none; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  progress::-webkit-progress-value { transition: width 160ms ease-out; }
+  progress::-moz-progress-bar { transition: width 160ms ease-out; }
+  button { transition-property: scale, background-color, border-color, box-shadow; transition-duration: 120ms; transition-timing-function: ease-out; }
+}

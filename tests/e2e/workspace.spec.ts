@@ -148,9 +148,9 @@ test('日题擦除范围可分别清除家具、房间和门窗，整图重置�
   const reset = page.getByRole('button', { name: '重置图纸', exact: true })
   const empty = page.locator('.cell-empty')
   const furniture = page.locator('g.object')
-  const pocket = page.locator('.edge-pocket')
+  const pocket = page.locator('.edge-pocket:not(.placement *)')
   const openWalls = page.locator('.edge-open')
-  const fixedWindows = page.locator('g.edge-window')
+  const fixedWindows = page.locator('g.edge-window:not(.placement *)')
   await expect(furniture).toHaveCount(1)
   await expect(openWalls).toHaveCount(3)
 
@@ -220,11 +220,14 @@ test('拉门只放在连续隔墙，墙被擦掉后显示冲突且可撤销', as
   await page.goto('/')
   await unlock(page, 8)
   const undo = page.getByRole('button', { name: '撤销' })
-  const pocket = page.locator('.edge-pocket')
+  const pocket = page.locator('.edge-pocket:not(.placement *)')
   await page.getByRole('button', { name: '拉门', exact: true }).click()
   await click(page, 2, 1.5)
   await click(page, 4, 6.5)
   await expect(pocket).toHaveCount(0)
+  await expect(page.locator('.placement.invalid')).toHaveCount(1)
+  await expect(page.locator('.plan-target-label')).toHaveText('×')
+  await expect(page.locator('.edit-feedback')).toContainText('拉门需要两段连续的普通隔墙')
   await expect(undo).toBeDisabled()
   await click(page, 4, 1.5)
   await expect(pocket).toHaveCount(1)
@@ -243,8 +246,8 @@ test('拉门只放在连续隔墙，墙被擦掉后显示冲突且可撤销', as
 test('外窗只放在外墙，推门只能放在墙段上', async ({ page }) => {
   await page.goto('/')
   await unlock(page, 9)
-  const windows = page.locator('g.edge-window')
-  const doors = page.locator('g.door')
+  const windows = page.locator('g.edge-window:not(.placement *)')
+  const doors = page.locator('g.door:not(.placement *)')
   const undo = page.getByRole('button', { name: '撤销' })
   await page.getByRole('button', { name: '外窗', exact: true }).click()
   await click(page, 4, 4.5)
@@ -570,6 +573,111 @@ test('双指接管取消待落定矩形，参考图可双指缩放', async ({ br
     await pinch()
     await expect(page.getByText('100%', { exact: true })).toHaveCount(0)
     await expect(plan.locator('.cell-empty')).toHaveCount(0)
+  } finally {
+    await context.close()
+  }
+})
+
+test('拖绘只实时更新图纸，落定才强调新达成条件', async ({ page }) => {
+  await page.goto('/')
+  const plan = page.getByRole('application', { name: boardName })
+  await drag(page, [5.5, .5], [7.5, 3.5])
+  const submit = page.getByRole('button', { name: '提交图纸' })
+  const a = await at(page, 7.5, 5.5)
+  const b = await at(page, 7.5, 7.5)
+  await page.mouse.move(a.x, a.y)
+  await page.mouse.down()
+  await page.mouse.move(b.x, b.y)
+  await expect(plan.locator('.cell-empty')).toHaveCount(0)
+  await expect(submit).toHaveAttribute('data-ready', 'false')
+  await expect(page.locator('.just-satisfied')).toHaveCount(0)
+  await page.mouse.up()
+  await expect(submit).toHaveAttribute('data-ready', 'true')
+  await expect(page.getByText('所有条件已满足，可以提交图纸。').filter({ visible: true }).last()).toBeVisible()
+  await submit.click()
+  const result = page.getByRole('dialog', { name: '委托已完成' })
+  await expect(result.getByText(first)).toBeVisible()
+  await expect(result.locator('.completion-stamp')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(submit).toBeFocused()
+  await submit.click()
+  await result.getByRole('button', { name: '下一关' }).click()
+  await expect(page.getByRole('heading', { name: '一室相连' })).toBeFocused()
+  await expect(page.locator('.completion-stamp')).toHaveCount(0)
+})
+
+test('异步拖绘报告迟到时不覆盖落定后的图纸状态', async ({ page }) => {
+  await page.addInitScript(() => {
+    const NativeWorker = window.Worker
+    window.Worker = class extends NativeWorker {
+      override postMessage(data: unknown) {
+        setTimeout(() => super.postMessage(data), 350)
+      }
+    }
+  })
+  await page.goto('/')
+  await drag(page, [5.5, .5], [7.5, 3.5])
+  await drag(page, [7.5, 5.5], [7.5, 7.5])
+  const plan = page.getByRole('application', { name: boardName })
+  await page.getByRole('button', { name: '撤销', exact: true }).click()
+  await expect(plan.locator('.cell-empty')).toHaveCount(3)
+  await page.waitForTimeout(450)
+  await expect(page.getByText('还有 3 格尚未分配。')).toBeVisible()
+  await expect(page.getByRole('button', { name: '提交图纸' })).toHaveAttribute('data-ready', 'false')
+})
+
+test('重叠家具可选中上层旋转，底层可移除并恢复', async ({ page }) => {
+  await page.goto('/')
+  await unlock(page, 13)
+  const plan = page.getByRole('application', { name: boardName })
+  const move = page.getByRole('button', { name: '移动', exact: true })
+  const undo = page.getByRole('button', { name: '撤销', exact: true })
+  const sofa = page.getByRole('button', { name: /沙发 3×1/ })
+  const rug = page.getByRole('button', { name: /地毯 2×2/ })
+  const level = teaching[12].level
+  const anchor = teaching[12].reference.roomTypes.findIndex(type => type === 'living')
+  expect(anchor).toBeGreaterThanOrEqual(0)
+  const x = anchor % level.width + .5
+  const y = Math.floor(anchor / level.width) + .5
+  for (const [first, second] of [[sofa, rug], [rug, sofa]]) {
+    await first.click()
+    await click(page, x, y)
+    await second.click()
+    await click(page, x, y)
+    await expect(plan.locator('[data-object]')).toHaveCount(2)
+    await move.click()
+    await click(page, x, y)
+    await expect(page.getByText('已选中 沙发')).toBeVisible()
+    const selected = plan.locator('[data-object].selected').last()
+    const shape = selected.locator(':scope > g')
+    await page.getByRole('button', { name: '旋转选中家具' }).click()
+    await expect(shape).toHaveAttribute('transform', /rotate\(90\)/)
+    await undo.click()
+    await expect(shape).not.toHaveAttribute('transform', /rotate\(90\)/)
+    await page.getByRole('button', { name: '移除', exact: true }).click()
+    await page.getByRole('button', { name: '切换重叠目标' }).click()
+    await click(page, x, y)
+    await expect(plan.locator('[data-object]')).toHaveCount(1)
+    await expect(plan.locator('[data-object] title').last()).toHaveText('沙发')
+    await undo.click()
+    await expect(plan.locator('[data-object]')).toHaveCount(2)
+    await undo.click()
+    await undo.click()
+  }
+})
+
+test('手机横屏可收起工具和委托清单，布局无横向溢出', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true, baseURL })
+  try {
+    const page = await context.newPage()
+    await page.goto('/')
+    await page.getByRole('button', { name: '绘图工具', exact: true }).tap()
+    await expect(page.getByRole('button', { name: '客厅', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: /^条件 / }).tap()
+    await expect(page.getByRole('heading', { name: '委托清单' })).toBeVisible()
+    await page.getByRole('button', { name: '返回图纸' }).tap()
+    await expect(page.getByRole('application', { name: boardName })).toBeFocused()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   } finally {
     await context.close()
   }

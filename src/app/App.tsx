@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpFromLine, BookOpen, CalendarDays, Check, ChevronDown,
@@ -8,10 +8,10 @@ import {
 } from 'lucide-react'
 import { chapters, teaching } from '../../content/levels.ts'
 import { legacyTeaching } from '../../content/legacy-levels.ts'
-import { catalog } from '../../packages/domain/catalog.ts'
-import { point, segment, turn } from '../../packages/domain/geometry.ts'
+import { catalog, occupied } from '../../packages/domain/catalog.ts'
+import { index, point, segment, shiftEdge, turn } from '../../packages/domain/geometry.ts'
 import { rooms } from '../../packages/domain/model.ts'
-import type { Board, Level } from '../../packages/domain/model.ts'
+import type { Board, Edge, Level, Result } from '../../packages/domain/model.ts'
 import { validate } from '../../packages/domain/validate.ts'
 import { dateInSingapore, generateDaily, generatorVersions } from '../../packages/generator/daily.ts'
 import CloudPanel from '../components/CloudPanel.tsx'
@@ -60,27 +60,69 @@ function setPreference(key: string, value: string) {
   try { localStorage.setItem(key, value) } catch { /* 偏好不可持久化时仍可游玩。 */ }
 }
 
-function Modal({ title, close, children, descriptionId, initialFocus }: {
-  title: string; close: () => void; children: ReactNode; descriptionId?: string; initialFocus?: RefObject<HTMLElement | null>
+function Modal({ open, title, close, children, descriptionId, initialFocus }: {
+  open: boolean; title: string; close: () => void; children: ReactNode
+  descriptionId?: string; initialFocus?: RefObject<HTMLElement | null>
 }) {
   const ref = useRef<HTMLDialogElement>(null)
+  const [shown, setShown] = useState(open)
+  if (open && !shown) setShown(true)
+
   useLayoutEffect(() => {
     const dialog = ref.current
+    if (!open || !dialog) return
     const previous = document.activeElement
-    dialog?.showModal()
+    dialog.showModal()
     initialFocus?.current?.focus({ preventScroll: true })
     return () => {
-      dialog?.close()
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true })
+      dialog.close()
+      if (previous instanceof HTMLElement && previous.isConnected && document.activeElement === document.body) {
+        previous.focus({ preventScroll: true })
+      }
     }
-  }, [initialFocus])
-  return <dialog ref={ref} className="modal" aria-label={title} aria-describedby={descriptionId} onCancel={event => { event.preventDefault(); close() }}
+  }, [open, initialFocus])
+
+  useEffect(() => {
+    if (open || !shown) return
+    const timer = window.setTimeout(() => setShown(false), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200)
+    return () => window.clearTimeout(timer)
+  }, [open, shown])
+
+  if (!shown) return null
+  return <dialog ref={ref} className="modal" aria-label={title} aria-describedby={descriptionId}
+    onCancel={event => { event.preventDefault(); close() }}
     onClick={event => { if (event.target === event.currentTarget) close() }}>
     <div className="modal-content">
       <header><h2>{title}</h2><button className="icon-btn" aria-label="关闭" onClick={close}><X size={19} /></button></header>
       {children}
     </div>
   </dialog>
+}
+
+function changedArea(level: Level, before: Board, after: Board): Pick<Result, 'cells' | 'edges'> {
+  const cells = new Set<number>()
+  const edges = new Set<Edge>()
+  before.roomTypes.forEach((type, cell) => { if (type !== after.roomTypes[cell]) cells.add(cell) })
+  for (const [source, target] of [[before, after], [after, before]]) {
+    const furniture = new Map(target.furniture.map(item => [item.id, item]))
+    for (const item of source.furniture) {
+      const other = furniture.get(item.id)
+      if (other && item.x === other.x && item.y === other.y && item.rotation === other.rotation && item.type === other.type) continue
+      for (const { x, y } of occupied(item)) {
+        const cell = index(level, x, y)
+        if (cell >= 0) cells.add(cell)
+      }
+    }
+    const openings = new Map(target.openings.map(item => [item.edge, item]))
+    for (const item of source.openings) {
+      if (JSON.stringify(item) === JSON.stringify(openings.get(item.edge))) continue
+      edges.add(item.edge)
+      if (item.kind === 'sliding') edges.add(shiftEdge(item.edge, item.pocket))
+    }
+    const openEdges = new Set(target.openEdges)
+    for (const edge of source.openEdges) if (!openEdges.has(edge)) edges.add(edge)
+  }
+  return { cells: [...cells], edges: [...edges] }
 }
 
 function Workspace({ session, save, onSave, openChapters, next, closeLevel, status, levelTitle }: {
@@ -111,6 +153,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const [message, setMessage] = useState('')
   const [editFeedback, setEditFeedback] = useState({ message: '', revision: 0 })
   const [selectedObjectId, selectObject] = useState('')
+  const [confirmation, setConfirmation] = useState<{ board: Board; from: Board; revision: number }>()
   const hintRequest = useRef(0)
   const resetCancel = useRef<HTMLButtonElement>(null)
   const undoButton = useRef<HTMLButtonElement>(null)
@@ -124,13 +167,28 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const canMirror = selection.tool === 'swing' || selection.tool === 'sliding'
   const atInitial = board === level.initial || JSON.stringify(board) === JSON.stringify(level.initial)
   const visibleBoard = reference ?? draft ?? board
-  const report = useReport(level, visibleBoard)
-  const results = [...report.level, ...report.global]
+  const { committed, visible: report } = useReport(level, reference ?? board, reference ? null : draft)
+  const results = [...committed.level, ...committed.global]
   const highlight = results.find(rule => rule.id === selectedRule)
-  const satisfied = report.level.filter(rule => rule.status === 'satisfied').length
-  const problems = report.global.filter(rule => rule.status !== 'satisfied')
+  const satisfied = committed.level.filter(rule => rule.status === 'satisfied').length
+  const problems = committed.global.filter(rule => rule.status !== 'satisfied')
   const chapter = session.legacy ? '旧版教学' : number ? chapters[Math.floor((number - 1) / 6)] : '每日挑战'
   const readOnly = Boolean(reference)
+  const recent = !readOnly && !draft && confirmation?.board === board ? confirmation : undefined
+  const recentFeedback = useMemo(() => {
+    if (!recent) return undefined
+    const previous = validate(level, recent.from)
+    const prior = new Set(previous.level.filter(item => item.status === 'satisfied').map(item => item.id))
+    return { ...changedArea(level, recent.from, recent.board), revision: recent.revision,
+      satisfied: new Set(committed.level.filter(item => item.status === 'satisfied' && !prior.has(item.id)).map(item => item.id)),
+      ready: committed.complete && !previous.complete }
+  }, [level, recent, committed])
+
+  useEffect(() => {
+    if (!confirmation) return
+    const timer = window.setTimeout(() => setConfirmation(undefined), 650)
+    return () => window.clearTimeout(timer)
+  }, [confirmation])
 
   useLayoutEffect(() => {
     if (reference) returnToEdit.current?.focus()
@@ -178,8 +236,12 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     if (nextBoard === board) return
     const boards = [...history.boards.slice(0, history.position + 1), nextBoard].slice(-100)
     setHistory({ boards, position: boards.length - 1 })
+    setConfirmation(current => ({ board: nextBoard, from: board, revision: (current?.revision ?? 0) + 1 }))
     setMessage('')
-    setEditFeedback(current => ({ ...current, message: '' }))
+    const changedObjects = new Set(nextBoard.furniture.filter(item => !board.furniture.includes(item)).map(item => item.id))
+    const conflict = changedObjects.size && validate(level, nextBoard).global.find(rule =>
+      rule.status === 'conflict' && rule.objects.some(id => changedObjects.has(id)))
+    announceEdit(conflict ? conflict.message : '')
     persist(nextBoard)
   }
 
@@ -187,6 +249,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     const position = history.position + change
     if (!history.boards[position]) return
     setHistory({ ...history, position })
+    setConfirmation(current => ({ board: history.boards[position], from: board, revision: (current?.revision ?? 0) + 1 }))
     setMessage('')
     setEditFeedback(current => ({ ...current, message: '' }))
     persist(history.boards[position])
@@ -199,9 +262,14 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     requestAnimationFrame(() => undoButton.current?.focus({ preventScroll: true }))
   }
 
+  function announceEdit(message: string) {
+    setEditFeedback(current => ({ message, revision: current.revision + 1 }))
+  }
+
   function chooseTool(tool: Tool) {
     setPanMode(false)
     if (selection.tool === tool) return
+    announceEdit('')
     select({ ...selection, tool, rotation: 'N', side: 0, mirror: false, targetOffset: 0 })
     selectObject('')
   }
@@ -224,7 +292,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
 
   useEffect(() => {
     const shortcut = (event: globalThis.KeyboardEvent) => {
-      if (modal || reference || document.querySelector('dialog[open]') || (event.target instanceof HTMLElement &&
+      if (modal || reference || draft || document.querySelector('dialog[open]') || (event.target instanceof HTMLElement &&
           (event.target.matches('input, select, textarea') || event.target.isContentEditable))) return
       const key = event.key.toLowerCase()
       if ((event.ctrlKey || event.metaKey) && (key === 'z' || key === 'y')) {
@@ -244,6 +312,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
 
   function pointToRule(rule: (typeof results)[number]) {
     setRule(rule.id)
+    if (rule.status !== 'satisfied') announceEdit(rule.message)
     const cell = rule.cells[0]
     const edge = rule.edges[0]
     const object = board.furniture.find(item => rule.objects.includes(item.id))
@@ -271,6 +340,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
       try {
         const solution = await session.reference()
         if (hintRequest.current !== request) return
+        setConfirmation(undefined)
         setReference(solution)
         setRule('')
         closeHint()
@@ -301,15 +371,12 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
 
   function submit() {
     if (reference || draft) return
-    const final = validate(level, board)
+    const final = committed
     if (!final.complete) {
       setMessage('图纸还有未满足的条件，请检查委托和全局规则。')
       const unresolved = [...final.level, ...final.global].filter(rule => rule.status !== 'satisfied')
       const problem = unresolved.find(rule => rule.cells.length || rule.edges.length || rule.objects.length) ?? unresolved[0]
-      if (problem) {
-        pointToRule(problem)
-        setEditFeedback(current => ({ message: problem.message, revision: current.revision + 1 }))
-      }
+      if (problem) pointToRule(problem)
       return
     }
     persist(board, hints, save?.completed ?? { at: new Date().toISOString(), hints })
@@ -365,6 +432,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
 
   function chooseFurniture(type: string) {
     setPanMode(false)
+    announceEdit('')
     select({ ...selection, tool: 'furniture', furniture: type, rotation: selection.tool === 'furniture' ? selection.rotation : 'N' })
   }
 
@@ -391,13 +459,20 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
 
       <main className="studio">
         <aside id="commission-brief" className="panel brief-panel" data-expanded={showBrief} aria-label="委托条件">
-          <h2>委托清单</h2>
-          <div className="progress-summary"><span>条件</span><strong>{satisfied}<span> / {report.level.length}</span></strong></div>
-          <progress aria-label="已满足条件" max={report.level.length} value={satisfied} />
+          <div className="brief-heading"><h2>委托清单</h2>
+            <button className="plain mobile-brief-return" onClick={() => {
+              setShowBrief(false)
+              drawing.current?.scrollIntoView({ block: 'nearest' })
+              drawing.current?.querySelector('svg')?.focus({ preventScroll: true })
+            }}>返回图纸</button>
+          </div>
+          <div className="progress-summary"><span>条件</span><strong>{satisfied}<span> / {committed.level.length}</span></strong></div>
+          <progress aria-label="已满足条件" max={committed.level.length} value={satisfied} />
           <div className="conditions">
-            {report.level.map((rule, i) => <button className="condition" key={rule.id}
+            {committed.level.map((rule, i) => <button className="condition" key={rule.id}
               aria-pressed={rule.id === selectedRule} onClick={() => rule.id === selectedRule ? setRule('') : pointToRule(rule)}>
-              <span className={`status-icon ${rule.status}`}>{rule.status === 'satisfied' ? <Check size={14} /> :
+              <span className={`status-icon ${rule.status}${recentFeedback?.satisfied.has(rule.id) ? ' just-satisfied' : ''}`}
+                key={recentFeedback?.satisfied.has(rule.id) ? recentFeedback.revision : 'status'}>{rule.status === 'satisfied' ? <Check size={14} /> :
                 rule.status === 'conflict' ? <X size={14} /> : <span className="status-dot" />}</span>
               <span><strong>{level.constraints[i].label}</strong><small>{rule.message}</small></span>
             </button>)}
@@ -429,8 +504,8 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
             </div>
           </div>
           <div className="sheet-utilities">
-            <button className="plain" aria-pressed={readOnly || panMode} disabled={readOnly}
-              onClick={() => setPanMode(current => !current)} title="图纸获得焦点后也可按住空格拖动"><Hand size={16} />平移</button>
+            {!readOnly && <button className="plain" aria-pressed={panMode}
+              onClick={() => setPanMode(current => !current)} title="图纸获得焦点后也可按住空格拖动"><Hand size={16} />平移</button>}
             <button className="plain mobile-palette-toggle" aria-controls="drawing-palette" aria-expanded={showPalette}
               onClick={() => {
                 setShowPalette(!showPalette)
@@ -438,15 +513,22 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
               }}>绘图工具 <ChevronDown size={14} /></button>
           </div>
           <div className="drawing" ref={drawing}>
-            <Plan level={level} board={visibleBoard} report={report} selection={selection} layers={visibleLayers}
-              highlight={highlight} view={view} setView={setView} commit={commit} preview={setDraft} readOnly={Boolean(reference)}
+            <div className="drawing-content" key={reference ? 'reference' : 'editor'}>
+              <Plan level={level} board={visibleBoard} report={report} selection={selection} layers={visibleLayers}
+              changes={recentFeedback} highlight={highlight} view={view} setView={setView} commit={commit} preview={nextDraft => { if (nextDraft) setConfirmation(undefined); setDraft(nextDraft) }} readOnly={Boolean(reference)}
               panMode={panMode} stopView={stopView} selectedObject={readOnly ? '' : selectedObjectId} selectObject={selectObject}
-              feedback={message => setEditFeedback(current => ({ message, revision: current.revision + 1 }))} />
+              feedback={announceEdit} />
+            </div>
           </div>
           {!readOnly && <div className="edit-feedback">
             {furnitureDetails && <span>{furnitureDetails}</span>}
             {selection.tool === 'move' && <span>{selectedObject ? `已选中 ${catalog[selectedObject.type]?.name}` : '点选家具后可原地旋转，拖动可移动。'}</span>}
-            <span role="status">{editFeedback.message && <span key={editFeedback.revision}>{editFeedback.message}</span>}</span>
+            {!editFeedback.message && selection.tool === 'furniture' && committed.global.some(item => item.status === 'conflict' && item.objects.length) &&
+              <button className="edit-issue" onClick={() => {
+                const problem = committed.global.findLast(item => item.status === 'conflict' && item.objects.length)
+                if (problem) pointToRule(problem)
+              }}>定位家具冲突</button>}
+            <span className="edit-message" role="status">{editFeedback.message && <span key={editFeedback.revision}>{editFeedback.message}</span>}</span>
           </div>}
           <div className="sheet-legend">
             <span><i className="legend-line" />固定外墙</span><span><i className="legend-empty" />未分配</span>
@@ -487,13 +569,14 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
             </div>
             <button className="mobile-layers plain" aria-haspopup="dialog" onClick={() => setModal('layers')}><Layers3 size={17} />图层</button>
           </div>
+          <span className="sr-only" role="status">{recentFeedback?.ready ? '所有条件已满足，可以提交图纸。' : ''}</span>
           <div className="mobile-progress">
             <button className="plain" aria-controls="commission-brief" aria-expanded={showBrief} onClick={() => {
               setShowBrief(!showBrief)
               if (!showBrief) requestAnimationFrame(() => document.getElementById('commission-brief')?.scrollIntoView({ block: 'nearest' }))
-            }}>条件 {satisfied}/{report.level.length}{problems.length > 0 ? ` · ${problems.length} 项图纸问题` : ''}</button>
-            <button className="primary" onClick={submit} disabled={readOnly} data-ready={report.complete}>
-              {report.complete ? '可以提交' : '提交图纸'} <ArrowRight size={16} /></button>
+            }}>条件 {satisfied}/{committed.level.length}{problems.length > 0 ? ` · ${problems.length} 项图纸问题` : committed.complete && !readOnly ? ' · 可以提交' : ''}</button>
+            <button className="primary" onClick={submit} disabled={readOnly || Boolean(draft)} data-ready={committed.complete && !readOnly}>
+              提交图纸 <ArrowRight size={16} /></button>
           </div>
         </section>
 
@@ -502,21 +585,22 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
 
       <div className="finish-bar">
         <div className="finish-status" role="status" data-incomplete={Boolean(message)}><span className="save-dot" />{message || status}</div>
+        {committed.complete && !readOnly && <span className="ready-note">所有条件已满足，可以提交图纸。</span>}
         <span id="board-keys" hidden>方向键移动 · Shift + 方向键选边 · Enter 编辑 · 空格拖动平移</span>
-        <button className="primary" onClick={submit} disabled={Boolean(reference)} data-ready={report.complete}>提交图纸 <ArrowRight size={17} /></button>
+        <button className="primary" onClick={submit} disabled={readOnly || Boolean(draft)} data-ready={committed.complete && !readOnly}>提交图纸 <ArrowRight size={17} /></button>
       </div>
     </div>
-    {modal === 'reset' && <Modal title="重置图纸？" close={() => setModal(null)} descriptionId="reset-description" initialFocus={resetCancel}>
+    <Modal open={modal === 'reset'} title="重置图纸？" close={() => setModal(null)} descriptionId="reset-description" initialFocus={resetCancel}>
       <p id="reset-description">恢复本关的起始图纸。重置后可用「撤销」恢复当前草稿。</p>
       <div className="modal-actions">
         <button ref={resetCancel} className="plain" onClick={() => setModal(null)}>取消</button>
         <button className="primary" onClick={resetBoard}>确认重置</button>
       </div>
-    </Modal>}
-    {modal === 'layers' && <Modal title="辅助图层" close={() => setModal(null)}>{layerOptions}
+    </Modal>
+    <Modal open={modal === 'layers'} title="辅助图层" close={() => setModal(null)}>{layerOptions}
       <div className="modal-actions"><button className="primary" onClick={() => setModal(null)}>返回图纸<ArrowRight size={16} /></button></div>
-    </Modal>}
-    {modal === 'rules' && <Modal title="规则说明" close={() => setModal(null)}>
+    </Modal>
+    <Modal open={modal === 'rules'} title="规则说明" close={() => setModal(null)}>
       <ul className="rule-list">
         <li>涂绘所有可用格。同类四向连成一间房；承重墙完全截断时才分房。</li>
         <li>面积和数量都是下限。房间须有门或开放边界，并有至少一格可到达主入口。</li>
@@ -529,8 +613,8 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         <li>触屏摆放家具或门窗时，先点选落点预览，可调整朝向，再次点按落点即可放置。移动工具点选家具后可原地旋转，按 Q 或使用「切换重叠目标」可选中底层物件。</li>
         <li>选择「擦除全部」会清除选区内的房间、家具、玩家门窗和墙体改动，固定结构保留。</li>
       </ul>
-    </Modal>}
-    {modal === 'hint' && <Modal title="委托提示" close={closeHint}>
+    </Modal>
+    <Modal open={modal === 'hint'} title="委托提示" close={closeHint}>
       {hintStep > 0 && <p>{level.tip}</p>}
       <div className="modal-actions">
         <button className="plain" disabled={hintLoading} onClick={() => void reveal(1)}>解释线索</button>
@@ -539,14 +623,18 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
       </div>
       {hintLoading && <p className="sr-only" role="status">正在打开参考图…</p>}
       {hintMessage && <p role="status">{hintMessage}</p>}
-    </Modal>}
-    {modal === 'result' && <Modal title="委托已完成" close={() => setModal(null)}>
-      {hints > 0 && <p>本次用到第 {hints} 级提示。</p>}
+    </Modal>
+    <Modal open={modal === 'result'} title="委托已完成" close={() => setModal(null)}>
+      <div className="completion-summary">
+        <span className="completion-stamp" aria-hidden="true"><Check size={23} />验收通过</span>
+        <div><strong>{level.title}</strong><p>已满足全部 {committed.level.length} 项委托条件。</p>
+        {hints > 0 && <p>本次用到第 {hints} 级提示。</p>}</div>
+      </div>
       <div className="modal-actions">
         <button className="plain" onClick={() => { setModal(null); closeLevel() }}>返回关卡目录</button>
         {number && number < teaching.length && <button className="primary" onClick={next}>下一关 <ArrowRight size={17} /></button>}
       </div>
-    </Modal>}
+    </Modal>
   </>
 }
 
@@ -727,7 +815,7 @@ export default function App() {
       <button onClick={() => showDialog('about')}>关于</button>
     </footer>
 
-    {modal === 'chapters' && <Modal title="关卡目录" close={close}>
+    <Modal open={modal === 'chapters'} title="关卡目录" close={close}>
       <p>已完成 {completed} / {teaching.length} 关</p>
       <div className="chapters">
         {chapters.map((chapter, group) => <section key={chapter}><h3>{chapter}</h3>
@@ -744,14 +832,14 @@ export default function App() {
         <button className="plain" disabled={!ready || dailyLoading} onClick={() => void openDaily()}><CalendarDays size={17} />{dailyLoading ? '正在打开…' : '每日挑战'}</button>
       </div>
       {(dailyLoading || notice) && <p role="status" className={dailyLoading ? 'sr-only' : undefined}>{dailyLoading ? '正在打开每日挑战…' : notice}</p>}
-    </Modal>}
-    {modal === 'theme' && <Modal title="图纸主题" close={close}>
+    </Modal>
+    <Modal open={modal === 'theme'} title="图纸主题" close={close}>
       <div className="theme-list">{Object.entries(presets).map(([id, name]) => <button key={id} aria-pressed={theme === id}
         onClick={() => setTheme(id as Theme)}><span className={`theme-sample sample-${id}`} />{name}{theme === id && <Check size={16} />}</button>)}</div>
       <div className="mode-list" aria-label="亮暗模式">{(['system', 'light', 'dark'] as const).map(value => <button key={value}
         aria-pressed={mode === value} className="plain" onClick={() => setMode(value)}>{{ system: '跟随系统', light: '亮色', dark: '暗色' }[value]}</button>)}</div>
-    </Modal>}
-    {modal === 'storage' && <Modal title="本地存档" close={close}>
+    </Modal>
+    <Modal open={modal === 'storage'} title="本地存档" close={close}>
       <p>{status}。</p>
       <input type="file" accept=".json,application/json" ref={upload} hidden onChange={async event => {
         const file = event.target.files?.[0]
@@ -781,11 +869,11 @@ export default function App() {
       </div></details>}
       {(dailyLoading || notice) && <p role="status">{dailyLoading ? '正在打开每日挑战…' : notice}</p>}
       <CloudPanel cloud={cloud} />
-    </Modal>}
-    {modal === 'about' && <Modal title="关于间取手帖" close={close}>
+    </Modal>
+    <Modal open={modal === 'about'} title="关于间取手帖" close={close}>
       <p>间取手帖是一款建筑空间解谜游戏。在网格图纸上划分房间、设置门窗、摆放家具，满足委托对面积、采光和动线的要求。你可以从 24 个教学关卡入门，也可以直接尝试每日挑战。</p>
       <h3>声明</h3>
       <p>间取手帖由个人独立开发，玩法受<a className="about-link" href={original} target="_blank" rel="noreferrer">《图纸没问题》</a>启发，为非官方作品。</p>
-    </Modal>}
+    </Modal>
   </>
 }
