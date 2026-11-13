@@ -2,14 +2,14 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpFromLine, BookOpen, CalendarDays, Check, ChevronDown,
-  ChevronRight, CircleHelp, CircleX, Compass, DoorOpen, Eraser, FlipHorizontal2, Focus, Grid2X2, Layers3,
+  ChevronRight, CircleHelp, CircleX, Compass, DoorOpen, Eraser, FlipHorizontal2, Focus, Grid2X2, Hand, Layers3,
   Lightbulb, LockKeyhole, Minus, MousePointer2, PanelsTopLeft, Plus, Redo2, RotateCw, SquareDashed,
   Sun, Trash2, Undo2, Wifi, X,
 } from 'lucide-react'
 import { chapters, teaching } from '../../content/levels.ts'
 import { legacyTeaching } from '../../content/legacy-levels.ts'
 import { catalog } from '../../packages/domain/catalog.ts'
-import { turn } from '../../packages/domain/geometry.ts'
+import { point, segment, turn } from '../../packages/domain/geometry.ts'
 import { rooms } from '../../packages/domain/model.ts'
 import type { Board, Level } from '../../packages/domain/model.ts'
 import { validate } from '../../packages/domain/validate.ts'
@@ -17,8 +17,8 @@ import { dateInSingapore, generateDaily, generatorVersions } from '../../package
 import CloudPanel from '../components/CloudPanel.tsx'
 import { api, useCloud } from './cloud.ts'
 import Plan from '../components/Plan.tsx'
-import { centered, layers } from './planView.ts'
-import type { Layer } from './planView.ts'
+import { centered, clampView, layers } from './planView.ts'
+import type { Layer, View } from './planView.ts'
 import { rotateFurniture } from './editor.ts'
 import type { EraseScope, Selection, Tool } from './editor.ts'
 import { mergeSaves, readArchive, readSaves, writeSaves } from './storage.ts'
@@ -93,7 +93,13 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const [draft, setDraft] = useState<Board | null>(null)
   const [selection, select] = useState<Selection>({ tool: 'rect', room: level.roomTypes[0], furniture: level.furnitureTypes[0] ?? '',
     rotation: 'N', side: 0, mirror: false, eraseScope: 'rooms' })
-  const [view, setView] = useState(centered)
+  const [view, renderView] = useState(centered)
+  const viewFrame = useRef(0)
+  const currentView = useRef(centered)
+  const targetView = useRef(centered)
+  const [panMode, setPanMode] = useState(false)
+  const [showPalette, setShowPalette] = useState(false)
+  const [showBrief, setShowBrief] = useState(false)
   const [visibleLayers, setLayers] = useState<Layer[]>(['分区', '结构'])
   const [selectedRule, setRule] = useState('')
   const [modal, setModal] = useState<ModalName | null>(null)
@@ -129,7 +135,42 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   useLayoutEffect(() => {
     if (reference) returnToEdit.current?.focus()
   }, [reference])
-  useLayoutEffect(() => () => { hintRequest.current++ }, [])
+  useLayoutEffect(() => () => { hintRequest.current++; cancelAnimationFrame(viewFrame.current) }, [])
+
+  function stopView() {
+    cancelAnimationFrame(viewFrame.current)
+    targetView.current = currentView.current
+  }
+
+  function setView(next: View) {
+    stopView()
+    targetView.current = next
+    currentView.current = next
+    renderView(next)
+  }
+
+  function animateView(request: View) {
+    const to = clampView(request, level.width + 3.15, level.height + 2.47)
+    stopView()
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { setView(to); return }
+    targetView.current = to
+    const from = currentView.current
+    const started = performance.now()
+    function frame(now: number) {
+      const progress = 1 - (1 - Math.min(1, (now - started) / 180)) ** 3
+      const next = { zoom: from.zoom + (to.zoom - from.zoom) * progress,
+        x: from.x + (to.x - from.x) * progress, y: from.y + (to.y - from.y) * progress }
+      currentView.current = next
+      renderView(next)
+      if (progress < 1) viewFrame.current = requestAnimationFrame(frame)
+    }
+    viewFrame.current = requestAnimationFrame(frame)
+  }
+
+  function zoomBy(change: number) {
+    const previous = targetView.current
+    animateView({ ...previous, zoom: Math.max(1, Math.min(3, previous.zoom + change)) })
+  }
 
   const persist = (next: Board, hintCount = hints, completed = save?.completed) =>
     onSave(level.id, { board: next, hints: hintCount, completed })
@@ -159,6 +200,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   }
 
   function chooseTool(tool: Tool) {
+    setPanMode(false)
     if (selection.tool === tool) return
     select({ ...selection, tool, rotation: 'N', side: 0, mirror: false, targetOffset: 0 })
     selectObject('')
@@ -202,7 +244,15 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
 
   function pointToRule(rule: (typeof results)[number]) {
     setRule(rule.id)
-    if (rule.cells.length || rule.edges.length) drawing.current?.scrollIntoView({ block: 'nearest' })
+    const cell = rule.cells[0]
+    const edge = rule.edges[0]
+    const object = board.furniture.find(item => rule.objects.includes(item.id))
+    const location = cell !== undefined ? point(level.width, cell) : edge ? segment(edge) : object
+    if (location) {
+      if (view.zoom > 1) animateView({ ...view, x: location.x + .5 - (-1.58 + (level.width + 3.15) / 2),
+        y: location.y + .5 - (-.65 + (level.height + 2.47) / 2) })
+      drawing.current?.scrollIntoView({ block: 'nearest' })
+    }
   }
 
   function closeHint() {
@@ -282,7 +332,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     <div className="room-options">
       {level.roomTypes.map(type => <button className="room-option" key={type} disabled={readOnly}
         aria-pressed={selection.room === type && selection.tool === 'rect'}
-        onClick={() => select({ ...selection, room: type, tool: 'rect' })}>
+        onClick={() => { setPanMode(false); select({ ...selection, room: type, tool: 'rect' }) }}>
         <span className={`swatch room-${type}`} />{rooms[type]}
         {selection.room === type && selection.tool === 'rect' && <Check className="choice-check" size={15} />}
       </button>)}
@@ -301,13 +351,24 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
           const def = catalog[type]
           return <button className="room-option object-option" key={type} disabled={readOnly} aria-pressed={selection.tool === 'furniture' && selection.furniture === type}
             title={`${def.rooms.map(room => rooms[room]).join('、')} · ${def.high ? '遮挡视线' : '视线可穿过'} · ${def.layer === 'floor' ? '可叠放' : '占据通道'} · ${def.usage === 'none' ? '装饰' : '需要使用格'}${def.radius ? ` · 半径 ${def.radius} 格` : ''}`}
-            onClick={() => select({ ...selection, tool: 'furniture', furniture: type, rotation: selection.tool === 'furniture' ? selection.rotation : 'N' })}>
+            onClick={() => chooseFurniture(type)}>
             <span>{def.name}</span><small>{def.width}×{def.height}</small>
           </button>
         })}
       </div>
     </section>}
-    {(level.furnitureTypes.length > 0 || level.openingTypes.length > 0) && <div className="tool-options object-tools">
+    <div className="layer-section palette-group">
+      <div className="palette-heading"><Layers3 size={15} /> 辅助图层</div>
+      {layerOptions}
+    </div>
+  </>
+
+  function chooseFurniture(type: string) {
+    setPanMode(false)
+    select({ ...selection, tool: 'furniture', furniture: type, rotation: selection.tool === 'furniture' ? selection.rotation : 'N' })
+  }
+
+  const objectControls = (level.furnitureTypes.length > 0 || level.openingTypes.length > 0) && <div className="tool-options object-tools">
       {level.furnitureTypes.length > 0 && <button disabled={readOnly} aria-pressed={selection.tool === 'move'} onClick={() => chooseTool('move')}><MousePointer2 size={16} />移动</button>}
       <button disabled={readOnly} aria-pressed={selection.tool === 'remove'} onClick={() => chooseTool('remove')}><Trash2 size={16} />移除</button>
       {canRotate && <button disabled={readOnly} onClick={rotate}><RotateCw size={16} />
@@ -315,12 +376,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
       {canMirror && <button disabled={readOnly} onClick={mirror} aria-pressed={selection.mirror}><FlipHorizontal2 size={16} />镜像</button>}
       {(selection.tool === 'move' || selection.tool === 'remove') &&
         <button disabled={readOnly} onClick={cycleTarget} title="Q">切换重叠目标</button>}
-    </div>}
-    <div className="layer-section palette-group">
-      <div className="palette-heading"><Layers3 size={15} /> 辅助图层</div>
-      {layerOptions}
     </div>
-  </>
 
   return <>
     <div className="workspace page-width">
@@ -334,7 +390,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
       </div>
 
       <main className="studio">
-        <aside className="panel brief-panel" aria-label="委托条件">
+        <aside id="commission-brief" className="panel brief-panel" data-expanded={showBrief} aria-label="委托条件">
           <h2>委托清单</h2>
           <div className="progress-summary"><span>条件</span><strong>{satisfied}<span> / {report.level.length}</span></strong></div>
           <progress aria-label="已满足条件" max={report.level.length} value={satisfied} />
@@ -365,17 +421,26 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
                 sheetTitle.current?.focus({ preventScroll: true })
               }}><ArrowLeft size={15} />返回编辑</button>}
               <button className="icon-btn" aria-label="缩小" title="缩小" disabled={view.zoom <= 1}
-                onClick={() => setView({ ...view, zoom: Math.max(1, view.zoom - .25) })}><Minus size={16} /></button>
+                onClick={() => zoomBy(-.25)}><Minus size={16} /></button>
               <span className="zoom">{Math.round(view.zoom * 100)}%</span>
               <button className="icon-btn" aria-label="放大" title="放大" disabled={view.zoom >= 3}
-                onClick={() => setView({ ...view, zoom: Math.min(3, view.zoom + .25) })}><Plus size={16} /></button>
-              <button className="icon-btn center-button" aria-label="居中" title="居中" onClick={() => setView(centered)}><Focus size={17} /></button>
+                onClick={() => zoomBy(.25)}><Plus size={16} /></button>
+              <button className="icon-btn center-button" aria-label="居中" title="居中" onClick={() => animateView(centered)}><Focus size={17} /></button>
             </div>
+          </div>
+          <div className="sheet-utilities">
+            <button className="plain" aria-pressed={readOnly || panMode} disabled={readOnly}
+              onClick={() => setPanMode(current => !current)} title="图纸获得焦点后也可按住空格拖动"><Hand size={16} />平移</button>
+            <button className="plain mobile-palette-toggle" aria-controls="drawing-palette" aria-expanded={showPalette}
+              onClick={() => {
+                setShowPalette(!showPalette)
+                if (!showPalette) requestAnimationFrame(() => document.getElementById('drawing-palette')?.scrollIntoView({ block: 'nearest' }))
+              }}>绘图工具 <ChevronDown size={14} /></button>
           </div>
           <div className="drawing" ref={drawing}>
             <Plan level={level} board={visibleBoard} report={report} selection={selection} layers={visibleLayers}
               highlight={highlight} view={view} setView={setView} commit={commit} preview={setDraft} readOnly={Boolean(reference)}
-              selectedObject={readOnly ? '' : selectedObjectId} selectObject={selectObject}
+              panMode={panMode} stopView={stopView} selectedObject={readOnly ? '' : selectedObjectId} selectObject={selectObject}
               feedback={message => setEditFeedback(current => ({ message, revision: current.revision + 1 }))} />
           </div>
           {!readOnly && <div className="edit-feedback">
@@ -388,6 +453,15 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
             <span><i className="legend-entry" />主入口</span>
             {visibleLayers.includes('结构') && <span>图示尺寸 mm</span>}
             {visibleLayers.includes('Wi-Fi') && <span><Wifi size={14} />Wi-Fi 覆盖</span>}
+          </div>
+          <div className="quick-objects">
+            {level.furnitureTypes.length > 0 && <select className="mobile-furniture" aria-label="选择家具"
+              disabled={readOnly} value={selection.tool === 'furniture' ? selection.furniture : ''}
+              onChange={event => chooseFurniture(event.target.value)}>
+              <option value="" disabled>选择家具</option>
+              {level.furnitureTypes.map(type => <option key={type} value={type}>{catalog[type].name}</option>)}
+            </select>}
+            {objectControls}
           </div>
           <div className="toolbar">
             <div className="toolbar-group">
@@ -413,14 +487,22 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
             </div>
             <button className="mobile-layers plain" aria-haspopup="dialog" onClick={() => setModal('layers')}><Layers3 size={17} />图层</button>
           </div>
+          <div className="mobile-progress">
+            <button className="plain" aria-controls="commission-brief" aria-expanded={showBrief} onClick={() => {
+              setShowBrief(!showBrief)
+              if (!showBrief) requestAnimationFrame(() => document.getElementById('commission-brief')?.scrollIntoView({ block: 'nearest' }))
+            }}>条件 {satisfied}/{report.level.length}{problems.length > 0 ? ` · ${problems.length} 项图纸问题` : ''}</button>
+            <button className="primary" onClick={submit} disabled={readOnly} data-ready={report.complete}>
+              {report.complete ? '可以提交' : '提交图纸'} <ArrowRight size={16} /></button>
+          </div>
         </section>
 
-        <aside className="palette-panel" aria-label="绘图工具">{palette}</aside>
+        <aside id="drawing-palette" className="palette-panel" data-expanded={showPalette} aria-label="绘图工具">{palette}</aside>
       </main>
 
       <div className="finish-bar">
         <div className="finish-status" role="status" data-incomplete={Boolean(message)}><span className="save-dot" />{message || status}</div>
-        <span id="board-keys" hidden>方向键移动 · Shift + 方向键选边 · Enter 编辑</span>
+        <span id="board-keys" hidden>方向键移动 · Shift + 方向键选边 · Enter 编辑 · 空格拖动平移</span>
         <button className="primary" onClick={submit} disabled={Boolean(reference)} data-ready={report.complete}>提交图纸 <ArrowRight size={17} /></button>
       </div>
     </div>
@@ -443,6 +525,8 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         <li>Wi-Fi 半径以格中心计算，跨墙覆盖取并集。</li>
         <li>图示以 1 格对应 1000 mm 标注定位轴线和轮廓尺寸。委托条件仍以格数计算。</li>
         <li>矩形 M，矩形擦除 E，旋转 R，镜像 F。点按编辑单格，拖动选定矩形。键盘用方向键选格，Shift + 方向键选边，Enter 应用工具。矩形工具用 Enter 分别选定两个角。</li>
+        <li>使用「平移」或让图纸获得焦点后按住空格拖动。触屏可双指缩放和平移，参考图支持同样的浏览操作。</li>
+        <li>触屏摆放家具或门窗时，先点选落点预览，可调整朝向，再次点按落点即可放置。移动工具点选家具后可原地旋转，按 Q 或使用「切换重叠目标」可选中底层物件。</li>
         <li>选择「擦除全部」会清除选区内的房间、家具、玩家门窗和墙体改动，固定结构保留。</li>
       </ul>
     </Modal>}

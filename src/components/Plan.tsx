@@ -11,6 +11,7 @@ import type { Report } from '../../packages/domain/validate.ts'
 import { edgeProblem, edit, editTarget, furnitureInPaintOrder, isRectangleTool, keyboardHit, openingPreview, openingNames } from '../app/editor.ts'
 import type { Hit, Selection, Tool } from '../app/editor.ts'
 
+import { clampView } from '../app/planView.ts'
 import type { Layer, View } from '../app/planView.ts'
 
 const edgeTools = new Set(['open', 'wall', 'swing', 'sliding', 'window'])
@@ -21,6 +22,7 @@ interface Props {
   commit: (board: Board) => void; readOnly: boolean
   selectedObject: string; selectObject: (id: string) => void
   feedback: (message: string) => void
+  panMode: boolean; stopView: () => void
 }
 
 function line(edge: Edge, inset = 0) {
@@ -51,11 +53,13 @@ function DoorSymbol({ opening }: { opening: Opening }) {
   </g>
 }
 
-export default function Plan({ level, board, report, selection, layers, highlight, view, setView, preview, commit, readOnly, selectedObject, selectObject, feedback }: Props) {
+export default function Plan({ level, board, report, selection, layers, highlight, view, setView, preview, commit, readOnly, selectedObject, selectObject, feedback, panMode, stopView }: Props) {
   const svg = useRef<SVGSVGElement>(null)
   const gesture = useRef<{ id: number; start: Hit; last: Hit; before: Board; next: Board; selection: Selection; touchPlacement: boolean } | null>(null)
   const touches = useRef(new Map<number, { x: number; y: number }>())
-  const pinch = useRef<{ x: number; y: number; length: number; view: View } | null>(null)
+  const pinch = useRef<{ x: number; y: number; length: number; view: View; scale: number } | null>(null)
+  const pan = useRef<{ id: number; x: number; y: number; view: View; scale: number } | null>(null)
+  const spaceHeld = useRef(false)
   const [touchAnchor, setTouchAnchor] = useState<{ hit: Hit; tool: Tool } | null>(null)
   const [keyboardActive, setKeyboardActive] = useState(false)
   const [placing, setPlacing] = useState(false)
@@ -74,7 +78,7 @@ export default function Plan({ level, board, report, selection, layers, highligh
   const structure = layers.includes('结构')
   const cursorHit = keyboardHit(level, cursor, keyboardSide)
   const placement = selection.tool === 'furniture' || edgeTools.has(selection.tool)
-  const target = readOnly || placing ? null : hover ?? (touchAnchor?.tool === selection.tool ? touchAnchor.hit : null) ??
+  const target = readOnly || panMode || placing ? null : hover ?? (touchAnchor?.tool === selection.tool ? touchAnchor.hit : null) ??
     (keyboardActive ? cursorHit : null)
   const aimedObject = target && (selection.tool === 'move' || selection.tool === 'remove')
     ? editTarget(level, board, target, selection) : undefined
@@ -128,13 +132,17 @@ export default function Plan({ level, board, report, selection, layers, highligh
   }
 
   function pointerDown(event: PointerEvent<SVGSVGElement>) {
-    if (readOnly || event.button !== 0) return
+    if (event.button !== 0 && event.button !== 1) return
+    stopView()
+    if (event.pointerType !== 'touch') event.currentTarget.focus({ preventScroll: true })
     event.currentTarget.setPointerCapture(event.pointerId)
     if (event.pointerType === 'touch') {
       touches.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
       if (touches.current.size > 1) {
         const [a, b] = [...touches.current.values()]
-        pinch.current = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, length: Math.hypot(a.x - b.x, a.y - b.y), view }
+        pinch.current = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, length: Math.hypot(a.x - b.x, a.y - b.y),
+          view, scale: 1 / (event.currentTarget.getScreenCTM()?.a || 1) }
+        pan.current = null
         gesture.current = null
         setPlacing(false)
         setHover(null)
@@ -142,6 +150,13 @@ export default function Plan({ level, board, report, selection, layers, highligh
         preview(null)
         return
       }
+    }
+    if (panMode || spaceHeld.current || readOnly || event.button === 1) {
+      pan.current = { id: event.pointerId, x: event.clientX, y: event.clientY, view,
+        scale: 1 / (event.currentTarget.getScreenCTM()?.a || 1) }
+      setHover(null)
+      setTouchAnchor(null)
+      return
     }
     const target = hit(event)
     if (!target) return
@@ -165,10 +180,21 @@ export default function Plan({ level, board, report, selection, layers, highligh
       if (touches.current.size < 2) return
       const [a, b] = [...touches.current.values()]
       const zoom = Math.max(1, Math.min(3, camera.view.zoom * Math.hypot(a.x - b.x, a.y - b.y) / Math.max(1, camera.length)))
-      const scale = width / event.currentTarget.getBoundingClientRect().width / zoom
-      setView({ zoom, x: camera.view.x - ((a.x + b.x) / 2 - camera.x) * scale, y: camera.view.y - ((a.y + b.y) / 2 - camera.y) * scale })
+      const rect = event.currentTarget.getBoundingClientRect()
+      const scale = camera.scale * camera.view.zoom / zoom
+      const x = (a.x + b.x) / 2 - rect.left - rect.width / 2
+      const y = (a.y + b.y) / 2 - rect.top - rect.height / 2
+      setView(clampView({ zoom, x: camera.view.x + (camera.x - rect.left - rect.width / 2) * camera.scale - x * scale,
+        y: camera.view.y + (camera.y - rect.top - rect.height / 2) * camera.scale - y * scale }, width, height))
       return
     }
+    const drag = pan.current
+    if (drag?.id === event.pointerId) {
+      setView(clampView({ ...drag.view, x: drag.view.x - (event.clientX - drag.x) * drag.scale,
+        y: drag.view.y - (event.clientY - drag.y) * drag.scale }, width, height))
+      return
+    }
+    if (panMode || spaceHeld.current || readOnly) return
     if (event.pointerType === 'touch' && !gesture.current) return
     const target = hit(event)
     setHover(target)
@@ -184,6 +210,7 @@ export default function Plan({ level, board, report, selection, layers, highligh
   }
 
   function pointerEnd(event: PointerEvent<SVGSVGElement>, cancel = false) {
+    if (pan.current?.id === event.pointerId) pan.current = null
     touches.current.delete(event.pointerId)
     if (!touches.current.size) pinch.current = null
     const action = gesture.current
@@ -191,7 +218,7 @@ export default function Plan({ level, board, report, selection, layers, highligh
     gesture.current = null
     setPlacing(false)
     preview(null)
-    if (cancel) { setHover(null); return }
+    if (cancel) { setHover(null); setTouchAnchor(null); return }
     if (action.touchPlacement) {
       const at = action.last
       const anchored = touchAnchor?.tool === action.selection.tool && touchAnchor.hit.cell === at.cell &&
@@ -212,26 +239,44 @@ export default function Plan({ level, board, report, selection, layers, highligh
     }
   }
 
+  function revealCell(cell: number) {
+    const { x, y } = point(level.width, cell)
+    const left = -1.58 + width * (1 - 1 / view.zoom) / 2 + view.x
+    const top = -.65 + height * (1 - 1 / view.zoom) / 2 + view.y
+    const dx = x < left ? x - left : Math.max(0, x + 1 - left - width / view.zoom)
+    const dy = y < top ? y - top : Math.max(0, y + 1 - top - height / view.zoom)
+    if (dx || dy) setView(clampView({ ...view, x: view.x + dx, y: view.y + dy }, width, height))
+  }
+
   function onKeyDown(event: KeyboardEvent<SVGSVGElement>) {
-    if (readOnly) return
+    if (event.key === ' ') {
+      event.preventDefault()
+      spaceHeld.current = true
+      return
+    }
     setKeyboardActive(true)
     setHover(null)
     const keys = ['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft']
     const direction = keys.indexOf(event.key)
     if (direction >= 0) {
       event.preventDefault()
+      if (readOnly || panMode) {
+        setView(clampView({ ...view, x: view.x + [0, .65, 0, -.65][direction],
+          y: view.y + [-.65, 0, .65, 0][direction] }, width, height))
+        return
+      }
       if (event.shiftKey) { setKeyboardSide(direction); return }
       const { x, y } = point(level.width, cursor)
       const dx = [0, 1, 0, -1][direction]
       const dy = [-1, 0, 1, 0][direction]
       for (let step = 1; step < Math.max(level.width, level.height); step++) {
         const next = index(level, x + dx * step, y + dy * step)
-        if (next >= 0) { setCursor(next); break }
+        if (next >= 0) { setCursor(next); revealCell(next); break }
       }
       return
     }
     if (event.key === 'Escape') { setKeyboardAnchor(null); setTouchAnchor(null); return }
-    if (event.key !== 'Enter' && event.key !== ' ') return
+    if (event.key !== 'Enter' || readOnly || panMode) return
     event.preventDefault()
     const target = keyboardHit(level, cursor, keyboardSide)
     if ((isRectangleTool(selection.tool) || selection.tool === 'move') && !keyboardStart) {
@@ -248,11 +293,12 @@ export default function Plan({ level, board, report, selection, layers, highligh
   }
 
   return <svg ref={svg} role="application" tabIndex={0} aria-label="平面图编辑区" aria-describedby="board-keys"
-    className="plan" data-tool={selection.tool}
+    className="plan" data-tool={selection.tool} data-pan={panMode || readOnly}
     viewBox={`${-1.58 + width * (1 - 1 / view.zoom) / 2 + view.x} ${-.65 + height * (1 - 1 / view.zoom) / 2 + view.y} ${width / view.zoom} ${height / view.zoom}`}
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerEnd}
     onPointerCancel={event => pointerEnd(event, true)} onLostPointerCapture={event => pointerEnd(event, true)}
-    onPointerLeave={() => setHover(null)} onBlur={() => { setKeyboardAnchor(null); setKeyboardActive(false) }} onKeyDown={onKeyDown}>
+    onPointerLeave={() => setHover(null)} onBlur={() => { setKeyboardAnchor(null); setKeyboardActive(false); spaceHeld.current = false }}
+    onKeyDown={onKeyDown} onKeyUp={event => { if (event.key === ' ') spaceHeld.current = false }}>
     <defs>
       <pattern id="paper-grid" width=".25" height=".25" patternUnits="userSpaceOnUse">
         <path d="M .25 0 H 0 V .25" className="micro-grid" />

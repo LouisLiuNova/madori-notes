@@ -547,3 +547,23 @@ progress::-webkit-progress-bar { background: var(--border); }
 .placement.invalid .edge-hover, .placement.invalid .door, .placement.invalid .edge-window { stroke: var(--accent); stroke-dasharray: .08 .05; }
 .usage-outline { fill: none; stroke: var(--ink); stroke-width: .045; stroke-dasharray: .08 .06; }
 .plan-target-label { pointer-events: none; font-size: .22px; font-weight: 800; text-anchor: middle; fill: var(--ink); stroke: var(--surface); stroke-width: .06; paint-order: stroke; }
+
+.plan[data-pan="true"] { cursor: grab; }
+.plan[data-pan="true"]:active { cursor: grabbing; }
+.sheet-utilities, .quick-objects, .mobile-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 3px 10px; }
+.quick-objects:empty { display: none; }
+.mobile-progress, .mobile-furniture, .sheet-utilities .mobile-palette-toggle { display: none; }
+@media (max-width: 580px), (max-height: 500px) and (max-width: 950px) {
+  .studio { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: "sheet" "palette" "brief"; }
+  .studio::before { grid-row: 1 / 4; }
+  .palette-panel[data-expanded="false"], .brief-panel[data-expanded="false"] { display: none; }
+  .palette-panel { border-top: 1px solid var(--border); }
+  .sheet-utilities .mobile-palette-toggle { display: inline-flex; }
+  .mobile-furniture { display: block; min-height: 44px; max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); padding-inline: 6px; background: var(--surface); }
+  .quick-objects .object-tools { flex: 1 1 auto; }
+  .quick-objects .object-tools button { min-height: 44px; }
+  .mobile-progress { display: flex; justify-content: space-between; }
+  .finish-bar .primary { display: none; }
+  .plan { height: clamp(165px, 37svh, 330px); aspect-ratio: auto; }
+  .sheet-legend { min-height: 28px; }
+}
