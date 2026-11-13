@@ -538,3 +538,12 @@ progress::-webkit-progress-bar { background: var(--border); }
 @keyframes reveal {
   from { opacity: 0; }
 }
+
+.edit-feedback { display: grid; gap: 3px; padding-inline: 12px; color: var(--muted); font-size: .8rem; }
+.edit-feedback > :empty { display: none; }
+.edit-feedback [role="status"] { color: var(--accent); }
+.object.selected > g > rect { stroke: var(--accent); stroke-width: .075; stroke-dasharray: .16 .07; }
+.placement { opacity: .78; pointer-events: none; }
+.placement.invalid .edge-hover, .placement.invalid .door, .placement.invalid .edge-window { stroke: var(--accent); stroke-dasharray: .08 .05; }
+.usage-outline { fill: none; stroke: var(--ink); stroke-width: .045; stroke-dasharray: .08 .06; }
+.plan-target-label { pointer-events: none; font-size: .22px; font-weight: 800; text-anchor: middle; fill: var(--ink); stroke: var(--surface); stroke-width: .06; paint-order: stroke; }

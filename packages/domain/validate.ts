@@ -129,11 +129,18 @@ export function validate(level: Level, board: Board): Report {
     const def = catalog[object.type]
     const cells = occupied(object).map(p => index(level, p.x, p.y))
     const room = roomOf.get(cells[0])
-    if (!def || !level.furnitureTypes.includes(object.type) || objectIds.has(object.id) ||
-        !room || !def.rooms.includes(room.type) || cells.some(cell => roomOf.get(cell) !== room ||
-          (def.layer === 'solid' ? solid.has(cell) : floor.has(cell))) ||
-        cells.some(cell => adjacent(cell).some(next => cells.includes(next.cell) && bearing.has(next.edge)))) {
-      global.push(result(`furniture-${object.id}`, 'conflict', '家具越界、跨墙、重叠或不适用于该区域。',
+    const reason = !def || !level.furnitureTypes.includes(object.type) ? '本关不适用，请移除。'
+      : objectIds.has(object.id) ? '标识重复，请移除重复物件后重新放置。'
+      : cells.some(cell => cell < 0) ? '超出可用格，请移回图纸内。'
+      : !room ? '位于未划分区域，请先划分房间或移入房间。'
+      : !def.rooms.includes(room.type) ? '不适用于该房间，请移入适用房间。'
+      : cells.some(cell => roomOf.get(cell) !== room) ||
+        cells.some(cell => adjacent(cell).some(next => cells.includes(next.cell) && bearing.has(next.edge)))
+        ? '跨越房间边界或承重墙，请移到同一房间内。'
+      : cells.some(cell => def.layer === 'solid' ? solid.has(cell) : floor.has(cell))
+        ? '与同层家具重叠，请移动其中一件。' : undefined
+    if (reason) {
+      global.push(result(`furniture-${object.id}`, 'conflict', `${def?.name ?? '未知家具'}：${reason}`,
         cells.filter(cell => cell >= 0), [], [object.id]))
       continue
     }

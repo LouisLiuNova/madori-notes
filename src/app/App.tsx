@@ -19,6 +19,7 @@ import { api, useCloud } from './cloud.ts'
 import Plan from '../components/Plan.tsx'
 import { centered, layers } from './planView.ts'
 import type { Layer } from './planView.ts'
+import { rotateFurniture } from './editor.ts'
 import type { EraseScope, Selection, Tool } from './editor.ts'
 import { mergeSaves, readArchive, readSaves, writeSaves } from './storage.ts'
 import type { Save, Saves } from './storage.ts'
@@ -102,6 +103,8 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const [hintMessage, setHintMessage] = useState('')
   const [reference, setReference] = useState<Board | null>(null)
   const [message, setMessage] = useState('')
+  const [editFeedback, setEditFeedback] = useState({ message: '', revision: 0 })
+  const [selectedObjectId, selectObject] = useState('')
   const hintRequest = useRef(0)
   const resetCancel = useRef<HTMLButtonElement>(null)
   const undoButton = useRef<HTMLButtonElement>(null)
@@ -109,6 +112,10 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   const sheetTitle = useRef<HTMLElement>(null)
   const returnToEdit = useRef<HTMLButtonElement>(null)
   const board = history.boards[history.position]
+  const selectedObject = board.furniture.find(item => item.id === selectedObjectId)
+  const furniture = catalog[selection.furniture]
+  const canRotate = selection.tool === 'furniture' || selection.tool === 'swing' || (selection.tool === 'move' && Boolean(selectedObject))
+  const canMirror = selection.tool === 'swing' || selection.tool === 'sliding'
   const atInitial = board === level.initial || JSON.stringify(board) === JSON.stringify(level.initial)
   const visibleBoard = reference ?? draft ?? board
   const report = useReport(level, visibleBoard)
@@ -131,6 +138,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     const boards = [...history.boards.slice(0, history.position + 1), nextBoard].slice(-100)
     setHistory({ boards, position: boards.length - 1 })
     setMessage('')
+    setEditFeedback(current => ({ ...current, message: '' }))
     persist(nextBoard)
   }
 
@@ -139,6 +147,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     if (!history.boards[position]) return
     setHistory({ ...history, position })
     setMessage('')
+    setEditFeedback(current => ({ ...current, message: '' }))
     persist(history.boards[position])
   }
 
@@ -150,11 +159,25 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
   }
 
   function chooseTool(tool: Tool) {
-    select({ ...selection, tool, rotation: tool === 'move' ? 'N' : selection.rotation })
+    if (selection.tool === tool) return
+    select({ ...selection, tool, rotation: 'N', side: 0, mirror: false, targetOffset: 0 })
+    selectObject('')
   }
 
   function rotate() {
-    select({ ...selection, rotation: turn(selection.rotation, 1), side: selection.side === 0 ? 1 : 0 })
+    if (readOnly || draft || !canRotate) return
+    if (selection.tool === 'move' && selectedObject) commit(rotateFurniture(board, selectedObject))
+    else if (selection.tool === 'swing') select({ ...selection, side: selection.side === 0 ? 1 : 0 })
+    else select({ ...selection, rotation: turn(selection.rotation, 1) })
+  }
+
+  function mirror() {
+    if (canMirror && !draft && !readOnly) select({ ...selection, mirror: !selection.mirror })
+  }
+
+  function cycleTarget() {
+    select({ ...selection, targetOffset: (selection.targetOffset ?? 0) + 1 })
+    selectObject('')
   }
 
   useEffect(() => {
@@ -169,7 +192,8 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
         if (key === 'm') chooseTool('rect')
         if (key === 'e') chooseTool('eraseRect')
         if (key === 'r') rotate()
-        if (key === 'f') select({ ...selection, mirror: !selection.mirror })
+        if (key === 'f') mirror()
+        if (key === 'q' && (selection.tool === 'move' || selection.tool === 'remove')) cycleTarget()
       }
     }
     window.addEventListener('keydown', shortcut)
@@ -231,12 +255,21 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     if (!final.complete) {
       setMessage('图纸还有未满足的条件，请检查委托和全局规则。')
       const unresolved = [...final.level, ...final.global].filter(rule => rule.status !== 'satisfied')
-      setRule((unresolved.find(rule => rule.cells.length || rule.edges.length) ?? unresolved[0])?.id ?? '')
+      const problem = unresolved.find(rule => rule.cells.length || rule.edges.length || rule.objects.length) ?? unresolved[0]
+      if (problem) {
+        pointToRule(problem)
+        setEditFeedback(current => ({ message: problem.message, revision: current.revision + 1 }))
+      }
       return
     }
     persist(board, hints, save?.completed ?? { at: new Date().toISOString(), hints })
     setModal('result')
   }
+
+  const turned = selection.rotation === 'E' || selection.rotation === 'W'
+  const usageLabels = { front: '单侧', sides: '两侧', around: '四周', none: '无需使用格' }
+  const furnitureDetails = selection.tool === 'furniture' && furniture &&
+    `${furniture.name} · ${turned ? furniture.height : furniture.width}×${turned ? furniture.width : furniture.height} · ${{ N: '初始', E: '顺转 90°', S: '顺转 180°', W: '顺转 270°' }[selection.rotation]} · 使用侧：${usageLabels[furniture.usage]} · 适用：${furniture.rooms.map(room => rooms[room]).join('、')}`
 
   const layerOptions = <div className="layer-options">
     {layers.map(layer => <label key={layer}><input type="checkbox" checked={visibleLayers.includes(layer)}
@@ -268,7 +301,7 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
           const def = catalog[type]
           return <button className="room-option object-option" key={type} disabled={readOnly} aria-pressed={selection.tool === 'furniture' && selection.furniture === type}
             title={`${def.rooms.map(room => rooms[room]).join('、')} · ${def.high ? '遮挡视线' : '视线可穿过'} · ${def.layer === 'floor' ? '可叠放' : '占据通道'} · ${def.usage === 'none' ? '装饰' : '需要使用格'}${def.radius ? ` · 半径 ${def.radius} 格` : ''}`}
-            onClick={() => select({ ...selection, tool: 'furniture', furniture: type })}>
+            onClick={() => select({ ...selection, tool: 'furniture', furniture: type, rotation: selection.tool === 'furniture' ? selection.rotation : 'N' })}>
             <span>{def.name}</span><small>{def.width}×{def.height}</small>
           </button>
         })}
@@ -277,8 +310,11 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
     {(level.furnitureTypes.length > 0 || level.openingTypes.length > 0) && <div className="tool-options object-tools">
       {level.furnitureTypes.length > 0 && <button disabled={readOnly} aria-pressed={selection.tool === 'move'} onClick={() => chooseTool('move')}><MousePointer2 size={16} />移动</button>}
       <button disabled={readOnly} aria-pressed={selection.tool === 'remove'} onClick={() => chooseTool('remove')}><Trash2 size={16} />移除</button>
-      <button disabled={readOnly} onClick={rotate}><RotateCw size={16} />旋转</button>
-      <button disabled={readOnly} onClick={() => select({ ...selection, mirror: !selection.mirror })} aria-pressed={selection.mirror}><FlipHorizontal2 size={16} />镜像</button>
+      {canRotate && <button disabled={readOnly} onClick={rotate}><RotateCw size={16} />
+        {selection.tool === 'move' ? '旋转选中家具' : selection.tool === 'swing' ? '翻转开启侧' : '旋转预览'}</button>}
+      {canMirror && <button disabled={readOnly} onClick={mirror} aria-pressed={selection.mirror}><FlipHorizontal2 size={16} />镜像</button>}
+      {(selection.tool === 'move' || selection.tool === 'remove') &&
+        <button disabled={readOnly} onClick={cycleTarget} title="Q">切换重叠目标</button>}
     </div>}
     <div className="layer-section palette-group">
       <div className="palette-heading"><Layers3 size={15} /> 辅助图层</div>
@@ -338,8 +374,15 @@ function Workspace({ session, save, onSave, openChapters, next, closeLevel, stat
           </div>
           <div className="drawing" ref={drawing}>
             <Plan level={level} board={visibleBoard} report={report} selection={selection} layers={visibleLayers}
-              highlight={highlight} view={view} setView={setView} commit={commit} preview={setDraft} readOnly={Boolean(reference)} />
+              highlight={highlight} view={view} setView={setView} commit={commit} preview={setDraft} readOnly={Boolean(reference)}
+              selectedObject={readOnly ? '' : selectedObjectId} selectObject={selectObject}
+              feedback={message => setEditFeedback(current => ({ message, revision: current.revision + 1 }))} />
           </div>
+          {!readOnly && <div className="edit-feedback">
+            {furnitureDetails && <span>{furnitureDetails}</span>}
+            {selection.tool === 'move' && <span>{selectedObject ? `已选中 ${catalog[selectedObject.type]?.name}` : '点选家具后可原地旋转，拖动可移动。'}</span>}
+            <span role="status">{editFeedback.message && <span key={editFeedback.revision}>{editFeedback.message}</span>}</span>
+          </div>}
           <div className="sheet-legend">
             <span><i className="legend-line" />固定外墙</span><span><i className="legend-empty" />未分配</span>
             <span><i className="legend-entry" />主入口</span>

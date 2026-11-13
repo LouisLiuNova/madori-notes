@@ -1,13 +1,14 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import DimensionLines from './DimensionLines.tsx'
 import FurnitureSymbol from './FurnitureSymbol.tsx'
 import type { KeyboardEvent, PointerEvent } from 'react'
-import { catalog, occupied } from '../../packages/domain/catalog.ts'
-import { edgeAt, index, point, segment, shiftEdge, sides, turn } from '../../packages/domain/geometry.ts'
-import { directions, rooms } from '../../packages/domain/model.ts'
+import { catalog } from '../../packages/domain/catalog.ts'
+import { edgeAt, index, point, segment, shiftEdge, sides } from '../../packages/domain/geometry.ts'
+import { rooms } from '../../packages/domain/model.ts'
 import type { Board, Edge, Level, Opening, Result } from '../../packages/domain/model.ts'
+import { validate } from '../../packages/domain/validate.ts'
 import type { Report } from '../../packages/domain/validate.ts'
-import { edit, isOpeningTool, isRectangleTool, keyboardHit, openingAt } from '../app/editor.ts'
+import { edgeProblem, edit, editTarget, furnitureInPaintOrder, isRectangleTool, keyboardHit, openingPreview, openingNames } from '../app/editor.ts'
 import type { Hit, Selection, Tool } from '../app/editor.ts'
 
 import type { Layer, View } from '../app/planView.ts'
@@ -18,6 +19,8 @@ interface Props {
   level: Level; board: Board; report: Report; selection: Selection; layers: Layer[]; highlight?: Result
   view: View; setView: (view: View) => void; preview: (board: Board | null) => void
   commit: (board: Board) => void; readOnly: boolean
+  selectedObject: string; selectObject: (id: string) => void
+  feedback: (message: string) => void
 }
 
 function line(edge: Edge, inset = 0) {
@@ -48,11 +51,14 @@ function DoorSymbol({ opening }: { opening: Opening }) {
   </g>
 }
 
-export default function Plan({ level, board, report, selection, layers, highlight, view, setView, preview, commit, readOnly }: Props) {
+export default function Plan({ level, board, report, selection, layers, highlight, view, setView, preview, commit, readOnly, selectedObject, selectObject, feedback }: Props) {
   const svg = useRef<SVGSVGElement>(null)
-  const gesture = useRef<{ id: number; start: Hit; last: Hit; before: Board; next: Board; selection: Selection } | null>(null)
+  const gesture = useRef<{ id: number; start: Hit; last: Hit; before: Board; next: Board; selection: Selection; touchPlacement: boolean } | null>(null)
   const touches = useRef(new Map<number, { x: number; y: number }>())
   const pinch = useRef<{ x: number; y: number; length: number; view: View } | null>(null)
+  const [touchAnchor, setTouchAnchor] = useState<{ hit: Hit; tool: Tool } | null>(null)
+  const [keyboardActive, setKeyboardActive] = useState(false)
+  const [placing, setPlacing] = useState(false)
   const [hover, setHover] = useState<Hit | null>(null)
   const [cursor, setCursor] = useState(() => Math.max(0, level.usable.findIndex(Boolean)))
   const [keyboardSide, setKeyboardSide] = useState(0)
@@ -66,8 +72,46 @@ export default function Plan({ level, board, report, selection, layers, highligh
   const outline = new Set(report.global.filter(item => item.status === 'conflict').flatMap(item => item.objects))
   const invalidOpenings = new Set(report.global.filter(item => item.status === 'conflict' && item.id.startsWith('opening-')).map(item => item.id))
   const structure = layers.includes('结构')
-  const canHighlight = (edge: Edge) => !isOpeningTool(selection.tool) || Boolean(openingAt(level, board, edge, selection))
-  const cursorEdge = keyboardHit(level, cursor, keyboardSide).edge
+  const cursorHit = keyboardHit(level, cursor, keyboardSide)
+  const placement = selection.tool === 'furniture' || edgeTools.has(selection.tool)
+  const target = readOnly || placing ? null : hover ?? (touchAnchor?.tool === selection.tool ? touchAnchor.hit : null) ??
+    (keyboardActive ? cursorHit : null)
+  const aimedObject = target && (selection.tool === 'move' || selection.tool === 'remove')
+    ? editTarget(level, board, target, selection) : undefined
+  const targetOpening = aimedObject && 'edge' in aimedObject ? aimedObject : undefined
+  const targetObject = aimedObject && 'id' in aimedObject ? aimedObject : undefined
+  const placementPreview = useMemo(() => {
+    if (!target || !placement) return null
+    if (edgeTools.has(selection.tool)) return {
+      opening: openingPreview(target.edge, selection),
+      edge: target.edge,
+      problem: edgeProblem(level, board, target.edge, selection),
+    }
+    const item = { ...point(level.width, target.cell), id: 'placement-preview', type: selection.furniture, rotation: selection.rotation }
+    if (target.cell < 0) return null
+    // Use a fresh ID so imported drafts cannot be mistaken for the preview.
+    item.id = crypto.randomUUID()
+    const candidate = validate(level, { ...board, furniture: [...board.furniture, item] })
+    const problem = candidate.global.find(result => result.status === 'conflict' && result.objects.includes(item.id))?.message
+    return { item, problem }
+  }, [board, level, placement, selection, target])
+  const [localProblem, setLocalProblem] = useState<{ hit: Hit; tool: Tool; message: string } | null>(null)
+  const failed = !readOnly && localProblem?.tool === selection.tool ? localProblem : null
+
+  function announceFailure(at: Hit, current: Selection, base: Board) {
+    const message = edgeTools.has(current.tool) ? edgeProblem(level, base, at.edge, current) :
+      current.tool === 'remove' ? '这里没有可移除的物件。' :
+      current.tool === 'move' ? '请选择要移动的家具，再拖到目标格。' :
+      current.tool === 'furniture' && at.cell < 0 ? '请选择图纸内的可用格。' : undefined
+    if (!message) return
+    setLocalProblem({ hit: at, tool: current.tool, message })
+    feedback(message)
+  }
+
+  function selectAt(at: Hit, current: Selection) {
+    const object = editTarget(level, board, at, current)
+    selectObject(object && 'id' in object ? object.id : '')
+  }
 
   function hit(event: PointerEvent<SVGSVGElement>): Hit | null {
     const element = svg.current
@@ -79,8 +123,8 @@ export default function Plan({ level, board, report, selection, layers, highligh
     if (coords.x < -.35 || coords.x > level.width + .35 || coords.y < -.35 || coords.y > level.height + .35) return null
     const distances = [Math.abs(coords.y - y), Math.abs(x + 1 - coords.x), Math.abs(y + 1 - coords.y), Math.abs(coords.x - x)]
     const distance = Math.min(...distances)
-    if (isOpeningTool(selection.tool) && distance > .28) return null
-    return { cell: index(level, x, y), edge: edgeAt({ x, y }, distances.indexOf(distance)) }
+    if (edgeTools.has(selection.tool) && distance > .28) return null
+    return { cell: index(level, x, y), edge: edgeAt({ x, y }, distances.indexOf(distance)), nearEdge: distance <= .18 }
   }
 
   function pointerDown(event: PointerEvent<SVGSVGElement>) {
@@ -92,20 +136,26 @@ export default function Plan({ level, board, report, selection, layers, highligh
         const [a, b] = [...touches.current.values()]
         pinch.current = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, length: Math.hypot(a.x - b.x, a.y - b.y), view }
         gesture.current = null
+        setPlacing(false)
+        setHover(null)
+        setTouchAnchor(null)
         preview(null)
         return
       }
     }
     const target = hit(event)
     if (!target) return
-    const object = selection.tool === 'move' ? board.furniture.slice().reverse().find(item =>
-      occupied(item).some(p => index(level, p.x, p.y) === target.cell)) : undefined
-    const effective = object ? { ...selection, rotation: turn(object.rotation, directions.indexOf(selection.rotation)) } : selection
-    const next = selection.tool === 'move' ? board : edit(level, board, target, effective, target)
-    gesture.current = { id: event.pointerId, start: target, last: target, before: board, next, selection: effective }
+    setLocalProblem(null)
+    setKeyboardActive(false)
+    const touchPlacement = event.pointerType === 'touch' && placement
+    setPlacing(placement && !touchPlacement)
+    if (selection.tool === 'move') selectAt(target, selection)
+    const next = selection.tool === 'move' || touchPlacement ? board : edit(level, board, target, selection, target)
+    gesture.current = { id: event.pointerId, start: target, last: target, before: board, next, selection, touchPlacement }
+    if (!touchPlacement) setTouchAnchor(null)
     setHover(target)
     if (target.cell >= 0) setCursor(target.cell)
-    preview(next)
+    if (next !== board) preview(next)
   }
 
   function pointerMove(event: PointerEvent<SVGSVGElement>) {
@@ -119,17 +169,18 @@ export default function Plan({ level, board, report, selection, layers, highligh
       setView({ zoom, x: camera.view.x - ((a.x + b.x) / 2 - camera.x) * scale, y: camera.view.y - ((a.y + b.y) / 2 - camera.y) * scale })
       return
     }
+    if (event.pointerType === 'touch' && !gesture.current) return
     const target = hit(event)
     setHover(target)
     const action = gesture.current
     if (!action || action.id !== event.pointerId || !target || (action.last.cell === target.cell && action.last.edge === target.edge)) return
     if (isRectangleTool(action.selection.tool) || action.selection.tool === 'move') {
       action.next = edit(level, action.before, target, action.selection, action.start)
-    } else if (action.selection.tool === 'open' || action.selection.tool === 'wall') {
+    } else if (!action.touchPlacement && (action.selection.tool === 'open' || action.selection.tool === 'wall')) {
       action.next = edit(level, action.next, target, action.selection, action.start)
     }
     action.last = target
-    preview(action.next)
+    if (!action.touchPlacement) preview(action.next)
   }
 
   function pointerEnd(event: PointerEvent<SVGSVGElement>, cancel = false) {
@@ -138,12 +189,33 @@ export default function Plan({ level, board, report, selection, layers, highligh
     const action = gesture.current
     if (action?.id !== event.pointerId) return
     gesture.current = null
+    setPlacing(false)
     preview(null)
-    if (!cancel && action.before !== action.next) commit(action.next)
+    if (cancel) { setHover(null); return }
+    if (action.touchPlacement) {
+      const at = action.last
+      const anchored = touchAnchor?.tool === action.selection.tool && touchAnchor.hit.cell === at.cell &&
+        (!edgeTools.has(action.selection.tool) || touchAnchor.hit.edge === at.edge)
+      setHover(null)
+      if (!anchored) {
+        setTouchAnchor({ hit: at, tool: action.selection.tool })
+        return
+      }
+      setTouchAnchor(null)
+      action.next = edit(level, action.before, at, action.selection, at)
+    }
+    if (action.before !== action.next) {
+      commit(action.next)
+      setHover(null)
+    } else if (action.selection.tool !== 'move' || !editTarget(level, action.before, action.start, action.selection)) {
+      announceFailure(action.last, action.selection, action.before)
+    }
   }
 
   function onKeyDown(event: KeyboardEvent<SVGSVGElement>) {
     if (readOnly) return
+    setKeyboardActive(true)
+    setHover(null)
     const keys = ['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft']
     const direction = keys.indexOf(event.key)
     if (direction >= 0) {
@@ -158,21 +230,21 @@ export default function Plan({ level, board, report, selection, layers, highligh
       }
       return
     }
-    if (event.key === 'Escape') { setKeyboardAnchor(null); return }
+    if (event.key === 'Escape') { setKeyboardAnchor(null); setTouchAnchor(null); return }
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     const target = keyboardHit(level, cursor, keyboardSide)
     if ((isRectangleTool(selection.tool) || selection.tool === 'move') && !keyboardStart) {
+      if (selection.tool === 'move') selectAt(target, selection)
       setKeyboardAnchor({ hit: target, tool: selection.tool })
       return
     }
     const start = keyboardStart ?? target
-    const object = selection.tool === 'move' ? board.furniture.slice().reverse().find(item =>
-      occupied(item).some(p => index(level, p.x, p.y) === start.cell)) : undefined
-    const effective = object ? { ...selection, rotation: turn(object.rotation, directions.indexOf(selection.rotation)) } : selection
-    const next = edit(level, board, target, effective, start)
+    const next = edit(level, board, target, selection, start)
     setKeyboardAnchor(null)
+    setLocalProblem(null)
     if (next !== board) commit(next)
+    else announceFailure(start, selection, board)
   }
 
   return <svg ref={svg} role="application" tabIndex={0} aria-label="平面图编辑区" aria-describedby="board-keys"
@@ -180,7 +252,7 @@ export default function Plan({ level, board, report, selection, layers, highligh
     viewBox={`${-1.58 + width * (1 - 1 / view.zoom) / 2 + view.x} ${-.65 + height * (1 - 1 / view.zoom) / 2 + view.y} ${width / view.zoom} ${height / view.zoom}`}
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerEnd}
     onPointerCancel={event => pointerEnd(event, true)} onLostPointerCapture={event => pointerEnd(event, true)}
-    onPointerLeave={() => setHover(null)} onBlur={() => setKeyboardAnchor(null)} onKeyDown={onKeyDown}>
+    onPointerLeave={() => setHover(null)} onBlur={() => { setKeyboardAnchor(null); setKeyboardActive(false) }} onKeyDown={onKeyDown}>
     <defs>
       <pattern id="paper-grid" width=".25" height=".25" patternUnits="userSpaceOnUse">
         <path d="M .25 0 H 0 V .25" className="micro-grid" />
@@ -236,8 +308,9 @@ export default function Plan({ level, board, report, selection, layers, highligh
         ? <line key={key} {...line(opening.edge)} className="edge-invalid" />
         : <DoorSymbol key={key} opening={opening} />
     })}
-    {[...board.furniture].sort((a, b) => Number(catalog[b.type]?.layer === 'floor') - Number(catalog[a.type]?.layer === 'floor'))
-      .map(item => Object.hasOwn(catalog, item.type) && <FurnitureSymbol key={item.id} item={item} invalid={outline.has(item.id)} />)}
+    {furnitureInPaintOrder(board)
+      .map(item => Object.hasOwn(catalog, item.type) && <FurnitureSymbol key={item.id} item={item} invalid={outline.has(item.id)}
+        selected={item.id === selectedObject || item.id === targetObject?.id || highlight?.objects.includes(item.id)} />)}
     {layers.includes('Wi-Fi') && board.furniture.filter(item => catalog[item.type]?.radius).map(item =>
       <circle key={item.id} cx={item.x + .5} cy={item.y + .5} r={catalog[item.type].radius} className="wifi-radius" />)}
     {[...highlightEdges].map(edge => <line key={edge} {...line(edge, .07)} className="edge-mark" />)}
@@ -257,13 +330,24 @@ export default function Plan({ level, board, report, selection, layers, highligh
     <g className="north-arrow" transform={`translate(${level.width + .75} .18)`}>
       <text y="0">N</text><path d="M 0 .16 L -.12 .52 L 0 .46 L .12 .52 Z" />
     </g>
-    {!readOnly && hover && (edgeTools.has(selection.tool) ?
-      canHighlight(hover.edge) && <line {...line(hover.edge, .05)} className="edge-hover" /> : hover.cell >= 0 &&
-      <rect x={point(level.width, hover.cell).x + .06} y={point(level.width, hover.cell).y + .06} width=".88" height=".88" className="cell-hover" />)}
-    {!readOnly && <g className="keyboard-cursor">
-      {edgeTools.has(selection.tool) ? canHighlight(cursorEdge) && <line {...line(cursorEdge, .05)} className="edge-hover" /> :
-        <rect x={point(level.width, cursor).x + .06} y={point(level.width, cursor).y + .06} width=".88" height=".88" className="cell-hover" />}
-      {keyboardStart && <rect x={point(level.width, keyboardStart.cell).x + .1} y={point(level.width, keyboardStart.cell).y + .1} width=".8" height=".8" className="cell-mark" />}
+    {target && !placement && target.cell >= 0 && <rect
+      x={point(level.width, target.cell).x + .06} y={point(level.width, target.cell).y + .06}
+      width=".88" height=".88" className="cell-hover" />}
+    {targetOpening && <line {...line(targetOpening.edge)} className="edge-hover" />}
+    {targetOpening?.kind === 'sliding' && <line {...line(shiftEdge(targetOpening.edge, targetOpening.pocket))} className="edge-hover" />}
+    {placementPreview?.item && <FurnitureSymbol item={placementPreview.item} preview invalid={Boolean(placementPreview.problem)} />}
+    {placementPreview?.edge && <g className={placementPreview.problem ? 'placement invalid' : 'placement'}>
+      <line {...line(placementPreview.edge, .05)} className="edge-hover" />
+      {placementPreview.opening && <DoorSymbol opening={placementPreview.opening} />}
     </g>}
+    {failed && <line {...line(failed.hit.edge, .07)} className="edge-invalid" />}
+    {keyboardStart && <rect x={point(level.width, keyboardStart.cell).x + .1} y={point(level.width, keyboardStart.cell).y + .1}
+      width=".8" height=".8" className="cell-mark" />}
+    {target && (placementPreview || aimedObject) && (() => {
+      const position = target.cell >= 0 ? point(level.width, target.cell) : segment(target.edge)
+      const label = placementPreview ? placementPreview.problem ? '×' : '✓' :
+        targetObject ? catalog[targetObject.type].name : targetOpening ? openingNames[targetOpening.kind] : ''
+      return <text className="plan-target-label" x={position.x + .5} y={position.y + .23}>{label}</text>
+    })()}
   </svg>
 }

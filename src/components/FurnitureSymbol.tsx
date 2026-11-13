@@ -1,14 +1,14 @@
 import { catalog } from '../../packages/domain/catalog.ts'
 import type { Furniture } from '../../packages/domain/model.ts'
 
-export default function FurnitureSymbol({ item, invalid }: { item: Furniture; invalid: boolean }) {
+export default function FurnitureSymbol({ item, invalid, selected, preview }: { item: Furniture; invalid: boolean; selected?: boolean; preview?: boolean }) {
   const def = catalog[item.type]
   const { width, height, name } = def
   const turns = {
     N: '', E: `translate(${height} 0) rotate(90)`, S: `translate(${width} ${height}) rotate(180)`,
     W: `translate(0 ${width}) rotate(-90)`,
   }
-  return <g transform={`translate(${item.x} ${item.y})`} className={`object ${def.layer} ${invalid ? 'invalid' : ''}`}>
+  return <g transform={`translate(${item.x} ${item.y})`} data-object={preview ? undefined : item.id} className={`object ${def.layer} ${invalid ? 'invalid' : ''} ${selected ? 'selected' : ''} ${preview ? 'placement' : ''}`}>
     <title>{name}</title>
     <g transform={turns[item.rotation]}>
       <rect x=".08" y=".08" width={width - .16} height={height - .16} rx=".04" />
@@ -26,6 +26,11 @@ export default function FurnitureSymbol({ item, invalid }: { item: Furniture; in
       </g> : item.type === 'router' ? <path className="fixture-detail" d="M .22 .51 A .4 .4 0 0 1 .78 .51 M .32 .61 A .25 .25 0 0 1 .68 .61 M .46 .72 H .54" />
       : item.type === 'shower' ? <path className="fixture-detail" d="M .13 1.87 L 1.86 .14 M .13 .14 L 1.87 1.87" />
       : <text x={width / 2} y={height / 2 + .06}>{name}</text>}
+      {preview && <path className="usage-outline" d={[
+        (def.usage === 'front' || def.usage === 'around') && `M .08 ${height + .1} H ${width - .08}`,
+        def.usage === 'around' && `M .08 -.1 H ${width - .08}`,
+        (def.usage === 'sides' || def.usage === 'around') && `M -.1 .08 V ${height - .08} M ${width + .1} .08 V ${height - .08}`,
+      ].filter(Boolean).join(' ')} />}
       {def.usage !== 'none' && def.usage !== 'sides' && def.usage !== 'around' &&
         <path className="fixture-detail" d={`M ${width / 2 - .08} ${height - .15} l .08 .055 .08 -.055`} />}
     </g>
